@@ -140,6 +140,7 @@ class ChannelManager(Thread):
                         "Could not find any channel with the name pattern `%s`.",
                         str(value),
                     )
+                    raise
 
                 channel_properties_dict["parent_channel_id"] = int(parent_channel_id)
 
@@ -201,7 +202,7 @@ class ChannelManager(Thread):
             channel_id = int(
                 self.ts3conn.channelfind(channel_name_pattern)[0].get("cid", "-1")
             )
-        except TS3Exception:
+        except (TS3Exception, IndexError):
             self.logger.exception(
                 "Error while finding a channel with the name pattern `%s`.",
                 str(channel_name_pattern),
@@ -404,6 +405,8 @@ class ChannelManager(Thread):
                     int(client_event.target_channel_id),
                 )
                 return
+            self.logger.exception("Failed to get channel information.")
+            return
 
         affected_channel = {}
         for channel_name_prefix, channels in channel_stats.items():
@@ -747,8 +750,10 @@ def stop_plugin(_sender=None, _msg=None):
     Stop the ChannelManager by setting the PLUGIN_STOPPER signal and undefining the mover.
     """
     global PLUGIN_INFO
-    PLUGIN_STOPPER.set()
-    PLUGIN_INFO = None
+    if PLUGIN_INFO is not None:
+        PLUGIN_STOPPER.set()
+        PLUGIN_INFO.join()
+        PLUGIN_INFO = None
 
 
 @command(f"{PLUGIN_COMMAND_NAME} restart")

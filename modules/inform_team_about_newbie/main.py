@@ -144,7 +144,7 @@ class InformTeamAboutNewbie(Thread):
         """
         try:
             channel = self.ts3conn.channelfind(name)[0]
-        except TS3Exception:
+        except (TS3Exception, IndexError):
             self.logger.exception(
                 "Error while finding a channel with the name `%s`.", str(name)
             )
@@ -297,8 +297,9 @@ class InformTeamAboutNewbie(Thread):
             poke_message = poke_message.replace("%n", str(newbie_client.client_name))
 
         for client in team_member_client_ids:
-            if re.search("%u", poke_message):
-                poke_message = poke_message.replace(
+            recipient_poke_message = poke_message
+            if re.search("%u", recipient_poke_message):
+                recipient_poke_message = recipient_poke_message.replace(
                     "%u", str(client.get("client_nickname"))
                 )
 
@@ -316,7 +317,9 @@ class InformTeamAboutNewbie(Thread):
                 )
 
                 try:
-                    self.ts3conn.clientpoke(client.get("clid"), str(poke_message))
+                    self.ts3conn.clientpoke(
+                        client.get("clid"), str(recipient_poke_message)
+                    )
                 except TS3QueryException:
                     self.logger.exception(
                         "Failed to poke the client_database_id=%s, client_nickname=%s.",
@@ -370,7 +373,7 @@ class InformTeamAboutNewbie(Thread):
         if client.client_uid == "ServerQuery":
             self.logger.debug(
                 "The client client_name=%s, client_database_id=%s is a ServerQuery. Ignoring.",
-                int(client.client_name),
+                str(client.client_name),
                 int(client.client_dbid),
             )
             return
@@ -450,8 +453,10 @@ def stop_plugin(_sender=None, _msg=None):
     Stop the InformTeamAboutNewbie by setting the PLUGIN_STOPPER signal and undefining the mover.
     """
     global PLUGIN_INFO
-    PLUGIN_STOPPER.set()
-    PLUGIN_INFO = None
+    if PLUGIN_INFO is not None:
+        PLUGIN_STOPPER.set()
+        PLUGIN_INFO.join()
+        PLUGIN_INFO = None
 
 
 @command(f"{PLUGIN_COMMAND_NAME} restart")

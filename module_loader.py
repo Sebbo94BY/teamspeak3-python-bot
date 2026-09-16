@@ -6,6 +6,7 @@ import sys
 # local imports
 from command_handler import CommandHandler
 from event_handler import EventHandler
+from helpers import strtobool
 
 setups = []
 exits = []
@@ -26,6 +27,19 @@ logger.info("Configured %s logger", str(CLASS_NAME))
 logger.propagate = 0
 
 
+def normalize_plugin_options(config):
+    """Convert the standard plugin boolean settings read from an INI file."""
+    boolean_options = {
+        "auto_start",
+        "enable_dry_run",
+        "auto_move_back",
+        "respect_channel_settings",
+    }
+    for section in config.values():
+        for option in boolean_options.intersection(section):
+            section[option] = bool(strtobool(section[option]))
+
+
 # We really really want to catch all Exception here to prevent a bad module crashing the
 # whole Bot
 # noinspection PyBroadException,PyPep8
@@ -37,6 +51,7 @@ def load_modules(bot, config):
     """
     global EVENT_HANDLER, COMMAND_HANDLER
     plugins = config.pop("Plugins")
+    normalize_plugin_options(config)
     EVENT_HANDLER = bot.event_handler
     COMMAND_HANDLER = bot.command_handler
 

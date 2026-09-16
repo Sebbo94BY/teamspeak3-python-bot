@@ -112,7 +112,7 @@ class SwitchSupporterChannelStatus(Thread):
         """
         try:
             channel_id = self.ts3conn.channelfind(name)[0].get("cid", "-1")
-        except TS3Exception:
+        except (TS3Exception, IndexError):
             self.logger.exception(
                 "Error while finding a channel with the name `%s`.", str(name)
             )
@@ -134,6 +134,7 @@ class SwitchSupporterChannelStatus(Thread):
             servergroup_list = self.ts3conn.servergrouplist()
         except TS3QueryException:
             self.logger.exception("Failed to get the list of available servergroups.")
+            return servergroup_ids
 
         for servergroup in servergroup_list:
             if int(servergroup.get("type")) == 0:
@@ -409,8 +410,10 @@ def stop_plugin(_sender=None, _msg=None):
     Stop the SwitchSupporterChannelStatus by setting the PLUGIN_STOPPER signal and undefining the plugin.
     """
     global PLUGIN_INFO
-    PLUGIN_STOPPER.set()
-    PLUGIN_INFO = None
+    if PLUGIN_INFO is not None:
+        PLUGIN_STOPPER.set()
+        PLUGIN_INFO.join()
+        PLUGIN_INFO = None
 
 
 @command(f"{PLUGIN_COMMAND_NAME} restart")
