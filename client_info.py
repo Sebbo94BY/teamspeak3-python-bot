@@ -29,6 +29,7 @@ class ClientInfo:
         for servergroup in get_servergroups(ts3conn):
             sgs[servergroup.get("sgid")] = servergroup.get("name")
         servergroups_list = client_data.get("client_servergroups", "").split(",")
+        self._servergroup_ids = tuple(group for group in servergroups_list if group)
         self._servergroups = []
         for servergroup in servergroups_list:
             group = sgs.get(servergroup)
@@ -78,6 +79,11 @@ class ClientInfo:
     def servergroups(self):
         """Return servergroups"""
         return self._servergroups
+
+    @property
+    def servergroup_ids(self):
+        """Return the client's server-group IDs without another query."""
+        return self._servergroup_ids
 
     def is_in_servergroups(self, pattern):
         """Checks, whether the client is member of the specific group or not."""

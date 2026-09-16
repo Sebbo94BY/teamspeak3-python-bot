@@ -105,6 +105,90 @@ class RuntimeBugTests(unittest.TestCase):
 
         self.assertEqual(urlopen.call_args.kwargs["timeout"], 10.0)
 
+    def test_twitch_user_ids_are_batched_and_cached(self):
+        plugin = twitch_live.TwitchLive.__new__(twitch_live.TwitchLive)
+        plugin.twitch_user_ids = {}
+        plugin.twitch_api_access_token = "token"
+        plugin.twitch_api_client_id = "client"
+
+        with (
+            patch.object(twitch_live.request, "urlopen") as urlopen,
+            patch.object(
+                twitch_live.json,
+                "load",
+                return_value={"data": [{"login": "ada", "id": "1"}]},
+            ),
+        ):
+            self.assertEqual(
+                plugin.get_twitch_streamer_user_ids(
+                    ["https://www.twitch.tv/Ada", "ada"]
+                ),
+                {"https://www.twitch.tv/Ada": "1", "ada": "1"},
+            )
+            plugin.get_twitch_streamer_user_ids(["ada"])
+
+        urlopen.assert_called_once()
+
+    def test_twitch_stream_statuses_are_batched(self):
+        plugin = twitch_live.TwitchLive.__new__(twitch_live.TwitchLive)
+        plugin.twitch_api_access_token = "token"
+        plugin.twitch_api_client_id = "client"
+
+        with (
+            patch.object(twitch_live.request, "urlopen") as urlopen,
+            patch.object(
+                twitch_live.json,
+                "load",
+                return_value={"data": [{"user_id": "1"}]},
+            ),
+        ):
+            self.assertEqual(plugin.get_live_streamer_user_ids(["1", "2"]), {"1"})
+
+        urlopen.assert_called_once()
+
+    def test_twitch_invalid_descriptions_do_not_make_requests(self):
+        plugin = twitch_live.TwitchLive.__new__(twitch_live.TwitchLive)
+        plugin.twitch_user_ids = {}
+
+        with patch.object(twitch_live.request, "urlopen") as urlopen:
+            self.assertEqual(
+                plugin.get_twitch_streamer_user_ids(["", "not a twitch login"]), {}
+            )
+
+        urlopen.assert_not_called()
+
+    def test_twitch_user_id_lookups_respect_the_batch_limit(self):
+        plugin = twitch_live.TwitchLive.__new__(twitch_live.TwitchLive)
+        plugin.twitch_user_ids = {}
+        plugin.twitch_api_access_token = "token"
+        plugin.twitch_api_client_id = "client"
+        descriptions = [f"streamer{index}" for index in range(101)]
+
+        with (
+            patch.object(twitch_live.request, "urlopen") as urlopen,
+            patch.object(twitch_live.json, "load", return_value={"data": []}),
+        ):
+            result = plugin.get_twitch_streamer_user_ids(descriptions)
+
+        self.assertEqual(urlopen.call_count, 2)
+        self.assertEqual(result, {description: None for description in descriptions})
+
+    def test_twitch_user_id_lookup_propagates_network_errors(self):
+        plugin = twitch_live.TwitchLive.__new__(twitch_live.TwitchLive)
+        plugin.twitch_user_ids = {}
+        plugin.twitch_api_access_token = "token"
+        plugin.twitch_api_client_id = "client"
+
+        with patch.object(
+            twitch_live.request,
+            "urlopen",
+            side_effect=twitch_live.error.URLError("down"),
+        ):
+            with self.assertRaises(twitch_live.error.URLError):
+                plugin.get_twitch_streamer_user_ids(["ada"])
+
+        self.assertEqual(plugin.twitch_user_ids, {})
+
     def test_servergroups_are_cached_until_the_refresh_interval_expires(self):
         connection = Mock()
         connection.servergrouplist.return_value = [{"sgid": "6", "name": "Admin"}]
