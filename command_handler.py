@@ -74,7 +74,12 @@ class CommandHandler:
         :param msg: Command message.
         :param sender: Client id of the sender.
         """
-        if not msg.startswith("!") and len(msg) > 2:
+        msg = (msg or "").strip()
+        if not msg:
+            logger.info("`clid=%s` sent an empty textmessage.", int(sender))
+            return
+
+        if not msg.startswith("!"):
             teamspeak_bot.send_msg_to_client(
                 self.ts3conn, sender, "Sorry, I only understand defined commands."
             )

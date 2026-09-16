@@ -134,7 +134,7 @@ class ChannelRequester(Thread):
         """
         try:
             channel_id = self.ts3conn.channelfind(name)[0].get("cid", "-1")
-        except TS3Exception:
+        except (TS3Exception, IndexError):
             self.logger.exception(
                 "Error while finding a channel with the name `%s`.", str(name)
             )
