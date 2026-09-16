@@ -478,36 +478,26 @@ class ChannelManager(Thread):
                 )
             )
 
-        iterator_existing_channel_numbers = iter(existing_channel_numbers)
+        existing_channel_number_set = set(existing_channel_numbers)
+        channel_number = 1
+        while channel_number in existing_channel_number_set:
+            channel_number += 1
 
-        channel_number = None
-        last_channel_number = None
-        i = 0
-        while channel_number is None:
-            i += 1
-
-            try:
-                last_channel_number = next(iterator_existing_channel_numbers)
-            except StopIteration:
-                previous_channel_number = last_channel_number
-                channel_number = last_channel_number + 1
-                break
-
-            if int(i) != int(last_channel_number):
-                previous_channel_number = i - 1
-                channel_number = i
+        previous_channel_number = channel_number - 1
 
         channel_properties.append(
             f"channel_name={affected_channel['channel_name_prefix']} {channel_number}"
         )
 
-        for channel in affected_channel["channels"]:
-            if (
-                channel["channel_name"]
-                == f"{affected_channel['channel_name_prefix']} {previous_channel_number}"
-            ):
-                previous_channel_id = channel["cid"]
-                break
+        previous_channel_id = 0
+        if previous_channel_number > 0:
+            for channel in affected_channel["channels"]:
+                if (
+                    channel["channel_name"]
+                    == f"{affected_channel['channel_name_prefix']} {previous_channel_number}"
+                ):
+                    previous_channel_id = channel["cid"]
+                    break
 
         channel_properties.append(f"channel_order={previous_channel_id}")
 
