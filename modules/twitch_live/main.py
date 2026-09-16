@@ -1,12 +1,13 @@
 # standard imports
 import logging
+
 import threading
 import traceback
 from threading import Thread
 from typing import Union
 import sys
 
-from urllib import request, error
+from urllib import error, parse, request
 import json
 from datetime import datetime, timedelta
 import re
@@ -16,6 +17,7 @@ from ts3API.TS3Connection import TS3QueryException
 from ts3API.utilities import TS3Exception
 
 # local imports
+from log_utils import create_log_handler
 from module_loader import setup_plugin, exit_plugin, command
 import teamspeak_bot
 import client_info
@@ -30,6 +32,8 @@ BOT: teamspeak_bot.Ts3Bot
 AUTO_START = True
 DRY_RUN = False  # log instead of performing actual actions
 CHECK_FREQUENCY_SECONDS = 5.0
+HTTP_TIMEOUT_SECONDS = 10.0
+TWITCH_API_BATCH_SIZE = 100
 SERVERGROUP_NAME = None  # The servergroup name, which should get un-/assigned from/to clients based on their Twitch stream status
 API_CLIENT_ID = None  # The Twitch API client ID
 API_CLIENT_SECRET = None  # The Twitch API client secret
@@ -45,7 +49,7 @@ class TwitchLive(Thread):
     logger = logging.getLogger(class_name)
     logger.propagate = 0
     logger.setLevel(logging.INFO)
-    file_handler = logging.FileHandler(f"logs/{class_name.lower()}.log", mode="a+")
+    file_handler = create_log_handler(f"logs/{class_name.lower()}.log")
     formatter = logging.Formatter("%(asctime)s: %(levelname)s: %(message)s")
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
@@ -67,6 +71,7 @@ class TwitchLive(Thread):
         self.twitch_api_client_id = API_CLIENT_ID
         self.twitch_api_access_token = None
         self.twitch_api_expires_at = None
+        self.twitch_user_ids = {}
 
     def run(self):
         """
@@ -115,13 +120,15 @@ class TwitchLive(Thread):
         )
 
         try:
-            with request.urlopen(api_request) as api_response:
+            with request.urlopen(
+                api_request, timeout=HTTP_TIMEOUT_SECONDS
+            ) as api_response:
                 api_response = json.load(api_response)
                 self.twitch_api_access_token = api_response["access_token"]
                 self.twitch_api_expires_at = datetime.now() + timedelta(
                     seconds=api_response["expires_in"]
                 )
-        except error.HTTPError:
+        except (error.HTTPError, error.URLError, TimeoutError):
             self.logger.exception("Failed to get a new Twitch API OAuth Access Token.")
             raise
 
@@ -142,13 +149,13 @@ class TwitchLive(Thread):
                 if int(client.get("client_type")) == 1:
                     self.logger.debug(
                         "update_client_list ignoring ServerQuery client: %s",
-                        str(client),
+                        client,
                     )
                     continue
 
                 client_list.append(client)
 
-            self.logger.debug("client_list: %s", str(client_list))
+            self.logger.debug("client_list: %s", client_list)
         except TS3Exception:
             self.logger.exception("Error getting client list!")
 
@@ -164,9 +171,8 @@ class TwitchLive(Thread):
 
         try:
             for client in self.get_client_list():
-                client_description = str(
-                    client_info.ClientInfo(client.get("clid"), self.ts3conn).description
-                )
+                info = client_info.ClientInfo(client.get("clid"), self.ts3conn)
+                client_description = str(info.description)
 
                 if not client_description:
                     self.logger.debug(
@@ -181,12 +187,13 @@ class TwitchLive(Thread):
                         "clid": client.get("clid"),
                         "client_database_id": client.get("client_database_id"),
                         "client_description": str(client_description),
+                        "servergroup_ids": info.servergroup_ids,
                     }
                 )
         except TS3Exception:
             self.logger.exception("Error getting client list!")
 
-        self.logger.debug("client_list: %s", str(client_list))
+        self.logger.debug("client_list: %s", client_list)
 
         return client_list
 
@@ -196,64 +203,86 @@ class TwitchLive(Thread):
         :param client_description: Twitch Streamer URL or login name
         :return: Twitch Streamer User ID
         """
-        self.logger.debug(
-            "Getting Twitch streamer user ID from `%s`.", str(client_description)
+        return self.get_twitch_streamer_user_ids([client_description]).get(
+            client_description
         )
 
+    @staticmethod
+    def _twitch_login(client_description):
+        """Normalize a configured Twitch URL or login name."""
         twitch_login = client_description.replace("https://www.twitch.tv/", "").strip()
+        if not twitch_login or re.search(r"\s", twitch_login):
+            return None
+        return twitch_login.lower()
 
-        twitch_streamer_user_id = None
+    def get_twitch_streamer_user_ids(self, client_descriptions):
+        """Resolve descriptions to Twitch user IDs, batching and caching lookups."""
+        descriptions_by_login = {}
+        for description in client_descriptions:
+            login = self._twitch_login(description)
+            if login is not None:
+                descriptions_by_login.setdefault(login, []).append(description)
 
-        if re.search(r"\s", twitch_login):
-            self.logger.debug(
-                "The client description contains at least one whitespace, which is not possible and allowed for Twitch logins: %s",
-                str(twitch_login),
+        unresolved_logins = [
+            login
+            for login in descriptions_by_login
+            if login not in self.twitch_user_ids
+        ]
+        for start in range(0, len(unresolved_logins), TWITCH_API_BATCH_SIZE):
+            logins = unresolved_logins[start : start + TWITCH_API_BATCH_SIZE]
+            query = parse.urlencode([("login", login) for login in logins])
+            api_request = request.Request(
+                f"https://api.twitch.tv/helix/users?{query}", method="GET"
             )
-            return twitch_streamer_user_id
-
-        self.logger.debug(
-            "Getting Twitch streamer user ID for `login` `%s`.", str(twitch_login)
-        )
-
-        api_request = request.Request(
-            f"https://api.twitch.tv/helix/users?login={twitch_login}", method="GET"
-        )
-        api_request.add_header(
-            "Authorization", f"Bearer {self.twitch_api_access_token}"
-        )
-        api_request.add_header("Client-Id", str(self.twitch_api_client_id))
-
-        try:
-            with request.urlopen(api_request) as api_response:
-                api_response = json.load(api_response)
-        except error.HTTPError as http_error:
-            # HTTP 400: Bad Request
-            if int(http_error.code) == 400:
-                self.logger.debug(
-                    "An invalid client description was provided: %s",
-                    str(client_description),
-                )
-                return twitch_streamer_user_id
-
-            self.logger.exception("Failed to get a Twitch streamer user ID.")
-            raise
-
-        try:
-            twitch_streamer_user_id = api_response["data"][0]["id"]
-        except IndexError:
-            self.logger.error(
-                "Received an unexpected API response for the client description `%s`: %s",
-                str(client_description),
-                str(api_response),
+            api_request.add_header(
+                "Authorization", f"Bearer {self.twitch_api_access_token}"
             )
-            return twitch_streamer_user_id
+            api_request.add_header("Client-Id", str(self.twitch_api_client_id))
+            try:
+                with request.urlopen(
+                    api_request, timeout=HTTP_TIMEOUT_SECONDS
+                ) as api_response:
+                    api_response = json.load(api_response)
+            except (error.HTTPError, error.URLError, TimeoutError):
+                self.logger.exception("Failed to get Twitch streamer user IDs.")
+                raise
 
-        self.logger.debug(
-            "Got the following Twitch streamer user ID: %s.",
-            int(twitch_streamer_user_id),
-        )
+            ids_by_login = {
+                user["login"].lower(): user["id"] for user in api_response["data"]
+            }
+            for login in logins:
+                self.twitch_user_ids[login] = ids_by_login.get(login)
 
-        return twitch_streamer_user_id
+        return {
+            description: self.twitch_user_ids.get(login)
+            for login, descriptions in descriptions_by_login.items()
+            for description in descriptions
+        }
+
+    def get_live_streamer_user_ids(self, user_ids):
+        """Return live Twitch user IDs using Helix's 100-user batch limit."""
+        live_user_ids = set()
+        unique_user_ids = list(set(user_ids))
+        for start in range(0, len(unique_user_ids), TWITCH_API_BATCH_SIZE):
+            batch = unique_user_ids[start : start + TWITCH_API_BATCH_SIZE]
+            query = parse.urlencode([("user_id", user_id) for user_id in batch])
+            api_request = request.Request(
+                f"https://api.twitch.tv/helix/streams?{query}", method="GET"
+            )
+            api_request.add_header(
+                "Authorization", f"Bearer {self.twitch_api_access_token}"
+            )
+            api_request.add_header("Client-Id", str(self.twitch_api_client_id))
+            try:
+                with request.urlopen(
+                    api_request, timeout=HTTP_TIMEOUT_SECONDS
+                ) as api_response:
+                    api_response = json.load(api_response)
+            except (error.HTTPError, error.URLError, TimeoutError):
+                self.logger.exception("Failed to get Twitch stream information.")
+                raise
+            live_user_ids.update(stream["user_id"] for stream in api_response["data"])
+        return live_user_ids
 
     def get_servergroup_ids_by_client(self, cldbid):
         """
@@ -285,42 +314,23 @@ class TwitchLive(Thread):
 
         return client_servergroup_ids
 
-    def manage_live_status(self, client):
+    def manage_live_status(self, client, twitch_stream_online=None):
         """
         Checks if the Twitch streamer is currently online or offline and assigns or removes the respective servergroup to / from the client.
         :param client: Client information (clid, Twitch user Id)
         """
-        self.logger.debug("Getting online status of Twitch streamer: `%s`", str(client))
+        self.logger.debug("Getting online status of Twitch streamer: `%s`", client)
 
-        api_request = request.Request(
-            f"https://api.twitch.tv/helix/streams?user_id={client['twitch_user_id']}",
-            method="GET",
-        )
-        api_request.add_header(
-            "Authorization", f"Bearer {self.twitch_api_access_token}"
-        )
-        api_request.add_header("Client-Id", str(self.twitch_api_client_id))
+        if twitch_stream_online is None:
+            twitch_stream_online = client[
+                "twitch_user_id"
+            ] in self.get_live_streamer_user_ids([client["twitch_user_id"]])
 
-        twitch_stream_online = False
-
-        try:
-            with request.urlopen(api_request) as api_response:
-                api_response = json.load(api_response)
-        except error.HTTPError:
-            self.logger.exception(
-                "Failed to get stream information for Twitch streamer: {str(client)}"
+        client_assigned_servergroup_ids = client.get("servergroup_ids")
+        if client_assigned_servergroup_ids is None:
+            client_assigned_servergroup_ids = self.get_servergroup_ids_by_client(
+                client["client_database_id"]
             )
-            raise
-
-        if (
-            len(api_response["data"])
-            and api_response["data"][0]["type"].lower() == "live"
-        ):
-            twitch_stream_online = True
-
-        client_assigned_servergroup_ids = self.get_servergroup_ids_by_client(
-            client["client_database_id"]
-        )
 
         if twitch_stream_online:
             self.logger.debug("Twitch stream is online!")
@@ -390,11 +400,27 @@ class TwitchLive(Thread):
 
             try:
                 self.get_oauth_access_token()
-                for client in self.get_clients_with_a_description():
-                    client["twitch_user_id"] = self.get_twitch_streamer_user_id(
-                        client.get("client_description")
+                clients = self.get_clients_with_a_description()
+                user_ids_by_description = self.get_twitch_streamer_user_ids(
+                    [client["client_description"] for client in clients]
+                )
+                for client in clients:
+                    client["twitch_user_id"] = user_ids_by_description.get(
+                        client["client_description"]
                     )
-                    self.manage_live_status(client)
+
+                live_user_ids = self.get_live_streamer_user_ids(
+                    client["twitch_user_id"]
+                    for client in clients
+                    if client["twitch_user_id"] is not None
+                )
+                for client in clients:
+                    if client["twitch_user_id"] is not None:
+                        self.manage_live_status(
+                            client,
+                            twitch_stream_online=client["twitch_user_id"]
+                            in live_user_ids,
+                        )
             except BaseException:
                 self.logger.error("Uncaught exception: %s", str(sys.exc_info()[0]))
                 self.logger.error(str(sys.exc_info()[1]))
@@ -464,6 +490,7 @@ def setup(
     auto_start=AUTO_START,
     enable_dry_run=DRY_RUN,
     frequency=CHECK_FREQUENCY_SECONDS,
+    http_timeout=HTTP_TIMEOUT_SECONDS,
     twitch_live_servergroup_name=SERVERGROUP_NAME,
     twitch_api_client_id=API_CLIENT_ID,
     twitch_api_client_secret=API_CLIENT_SECRET,
@@ -471,12 +498,15 @@ def setup(
     """
     Sets up this plugin.
     """
-    global BOT, AUTO_START, DRY_RUN, CHECK_FREQUENCY_SECONDS, SERVERGROUP_NAME, API_CLIENT_ID, API_CLIENT_SECRET
+    global BOT, AUTO_START, DRY_RUN, CHECK_FREQUENCY_SECONDS, HTTP_TIMEOUT_SECONDS, SERVERGROUP_NAME, API_CLIENT_ID, API_CLIENT_SECRET
 
     BOT = ts3bot
     AUTO_START = auto_start
     DRY_RUN = enable_dry_run
     CHECK_FREQUENCY_SECONDS = frequency
+    HTTP_TIMEOUT_SECONDS = float(http_timeout)
+    if HTTP_TIMEOUT_SECONDS <= 0:
+        raise ValueError("http_timeout must be greater than zero.")
     SERVERGROUP_NAME = twitch_live_servergroup_name
     API_CLIENT_ID = twitch_api_client_id
     API_CLIENT_SECRET = twitch_api_client_secret

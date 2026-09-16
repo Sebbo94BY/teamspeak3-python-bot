@@ -1,5 +1,6 @@
 # standard imports
 import logging
+
 import threading
 from threading import Thread
 from typing import Union
@@ -12,8 +13,10 @@ from ts3API.TS3Connection import TS3QueryException
 from ts3API.utilities import TS3Exception
 
 # local imports
-from module_loader import setup_plugin, exit_plugin, command, event
+from log_utils import create_log_handler
+from module_loader import coalesce_events, setup_plugin, exit_plugin, command, event
 import teamspeak_bot
+from servergroup_cache import get_servergroups
 
 PLUGIN_VERSION = 0.5
 PLUGIN_COMMAND_NAME = "channelrequester"
@@ -38,7 +41,7 @@ class ChannelRequester(Thread):
     logger = logging.getLogger(class_name)
     logger.propagate = 0
     logger.setLevel(logging.INFO)
-    file_handler = logging.FileHandler(f"logs/{class_name.lower()}.log", mode="a+")
+    file_handler = create_log_handler(f"logs/{class_name.lower()}.log")
     formatter = logging.Formatter("%(asctime)s: %(levelname)s: %(message)s")
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
@@ -108,7 +111,7 @@ class ChannelRequester(Thread):
             return servergroup_ids_to_ignore
 
         try:
-            servergroup_list = self.ts3conn.servergrouplist()
+            servergroup_list = get_servergroups(self.ts3conn)
         except TS3QueryException:
             self.logger.exception("Failed to get the list of available servergroups.")
             return servergroup_ids_to_ignore
@@ -278,7 +281,7 @@ class ChannelRequester(Thread):
         except TS3QueryException:
             self.logger.exception(
                 "Failed to move the client into his private channel: %s",
-                str(client),
+                client,
             )
             raise
 
@@ -290,12 +293,12 @@ class ChannelRequester(Thread):
             self.logger.debug("No client has been provided. Nothing todo!")
             return
 
-        self.logger.debug("Received an event for this client: %s", str(client))
+        self.logger.debug("Received an event for this client: %s", client)
 
         try:
             client_info = self.ts3conn.clientinfo(client.clid)
         except AttributeError:
-            self.logger.exception("The client has no clid: %s.", str(client))
+            self.logger.exception("The client has no clid: %s.", client)
             raise
         except TS3Exception:
             self.logger.exception(
@@ -320,7 +323,7 @@ class ChannelRequester(Thread):
                     self.logger.debug(
                         "The client is in the servergroup sgid=%s, which should be ignored: %s",
                         int(client_servergroup_id),
-                        str(client),
+                        client,
                     )
                     return
 
@@ -525,6 +528,7 @@ class ChannelRequester(Thread):
 
 
 @event(ClientEnteredEvent, ClientMovedEvent, ClientMovedSelfEvent)
+@coalesce_events()
 def client_joined(event_data):
     """
     Client joined the server or a channel or somebody moved the client into a different channel.

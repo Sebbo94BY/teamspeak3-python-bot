@@ -1,5 +1,6 @@
 # standard imports
 import logging
+
 import threading
 from threading import Thread
 from typing import Union
@@ -13,8 +14,10 @@ from ts3API.TS3Connection import TS3QueryException
 from ts3API.utilities import TS3Exception
 
 # local imports
+from log_utils import create_log_handler
 from module_loader import setup_plugin, exit_plugin, command, event
 import teamspeak_bot
+from servergroup_cache import get_servergroups
 
 PLUGIN_VERSION = 0.4
 PLUGIN_COMMAND_NAME = "informteamaboutnewbie"
@@ -43,7 +46,7 @@ class InformTeamAboutNewbie(Thread):
     logger = logging.getLogger(class_name)
     logger.propagate = 0
     logger.setLevel(logging.INFO)
-    file_handler = logging.FileHandler(f"logs/{class_name.lower()}.log", mode="a+")
+    file_handler = create_log_handler(f"logs/{class_name.lower()}.log")
     formatter = logging.Formatter("%(asctime)s: %(levelname)s: %(message)s")
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
@@ -117,7 +120,7 @@ class InformTeamAboutNewbie(Thread):
         :return: Servergroup
         """
         try:
-            servergroups = self.ts3conn.servergrouplist()
+            servergroups = get_servergroups(self.ts3conn)
         except TS3Exception:
             self.logger.exception(
                 "Could not find any servergroup with the following name: %s", str(name)
@@ -127,7 +130,7 @@ class InformTeamAboutNewbie(Thread):
         servergroup = None
         for group in servergroups:
             if int(group.get("type")) == 0:
-                self.logger.debug("Ignoring servergroup template: %s", str(group))
+                self.logger.debug("Ignoring servergroup template: %s", group)
                 continue
 
             if group.get("name") == name:
@@ -273,14 +276,14 @@ class InformTeamAboutNewbie(Thread):
             if int(client.get("client_type")) == 1:
                 self.logger.debug(
                     "update_client_list ignoring ServerQuery client: %s",
-                    str(client),
+                    client,
                 )
                 continue
 
             if client.get("client_database_id") not in team_member_database_id_list:
                 self.logger.debug(
                     "The following client is not member of any team servergroup: %s",
-                    str(client),
+                    client,
                 )
                 continue
 

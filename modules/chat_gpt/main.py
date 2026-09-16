@@ -1,5 +1,6 @@
 # standard imports
 import logging
+
 import threading
 from threading import Thread
 from typing import Union
@@ -9,6 +10,7 @@ from openai import AuthenticationError, OpenAI
 from ts3API.utilities import TS3Exception
 
 # local imports
+from log_utils import create_log_handler
 from module_loader import setup_plugin, exit_plugin, command, group
 import teamspeak_bot
 
@@ -35,7 +37,7 @@ class ChatGPT(Thread):
     logger = logging.getLogger(class_name)
     logger.propagate = 0
     logger.setLevel(logging.INFO)
-    file_handler = logging.FileHandler(f"logs/{class_name.lower()}.log", mode="a+")
+    file_handler = create_log_handler(f"logs/{class_name.lower()}.log")
     formatter = logging.Formatter("%(asctime)s: %(levelname)s: %(message)s")
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)

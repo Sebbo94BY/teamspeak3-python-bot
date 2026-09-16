@@ -1,11 +1,14 @@
 """Regression tests for runtime failures in bot and plugin control paths."""
 
-# pylint: disable=attribute-defined-outside-init,missing-class-docstring,missing-function-docstring,redefined-outer-name,wrong-import-position
+# pylint: disable=attribute-defined-outside-init,missing-class-docstring,missing-function-docstring,redefined-outer-name,too-many-public-methods,wrong-import-position
 import logging
 import os
 import sys
+import threading
 import types
 import unittest
+from logging.handlers import TimedRotatingFileHandler
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -61,6 +64,8 @@ import event_handler
 import module_loader
 import teamspeak_bot
 import command_handler
+import log_utils
+import servergroup_cache
 
 
 class _Registrar:
@@ -78,14 +83,180 @@ from modules.afk_mover import main as afk_mover
 from modules.channel_manager import main as channel_manager
 from modules.idle_mover import main as idle_mover
 from modules.inform_team_about_newbie import main as newbie_notifier
+from modules.twitch_live import main as twitch_live
 
 
 class RuntimeBugTests(unittest.TestCase):
+    def test_logs_rotate_daily_with_finite_retention(self):
+        with TemporaryDirectory() as tempdir:
+            handler = log_utils.create_log_handler(f"{tempdir}/bot.log")
+            self.assertIsInstance(handler, TimedRotatingFileHandler)
+            self.assertEqual(handler.backupCount, 14)
+            handler.close()
+
+    def test_twitch_requests_have_a_timeout(self):
+        plugin = twitch_live.TwitchLive.__new__(twitch_live.TwitchLive)
+        plugin.twitch_api_expires_at = None
+
+        with patch.object(
+            twitch_live.request, "urlopen", side_effect=TimeoutError
+        ) as urlopen:
+            with self.assertRaises(TimeoutError):
+                plugin.get_oauth_access_token()
+
+        self.assertEqual(urlopen.call_args.kwargs["timeout"], 10.0)
+
+    def test_twitch_user_ids_are_batched_and_cached(self):
+        plugin = twitch_live.TwitchLive.__new__(twitch_live.TwitchLive)
+        plugin.twitch_user_ids = {}
+        plugin.twitch_api_access_token = "token"
+        plugin.twitch_api_client_id = "client"
+
+        with (
+            patch.object(twitch_live.request, "urlopen") as urlopen,
+            patch.object(
+                twitch_live.json,
+                "load",
+                return_value={"data": [{"login": "ada", "id": "1"}]},
+            ),
+        ):
+            self.assertEqual(
+                plugin.get_twitch_streamer_user_ids(
+                    ["https://www.twitch.tv/Ada", "ada"]
+                ),
+                {"https://www.twitch.tv/Ada": "1", "ada": "1"},
+            )
+            plugin.get_twitch_streamer_user_ids(["ada"])
+
+        urlopen.assert_called_once()
+
+    def test_twitch_stream_statuses_are_batched(self):
+        plugin = twitch_live.TwitchLive.__new__(twitch_live.TwitchLive)
+        plugin.twitch_api_access_token = "token"
+        plugin.twitch_api_client_id = "client"
+
+        with (
+            patch.object(twitch_live.request, "urlopen") as urlopen,
+            patch.object(
+                twitch_live.json,
+                "load",
+                return_value={"data": [{"user_id": "1"}]},
+            ),
+        ):
+            self.assertEqual(plugin.get_live_streamer_user_ids(["1", "2"]), {"1"})
+
+        urlopen.assert_called_once()
+
+    def test_twitch_invalid_descriptions_do_not_make_requests(self):
+        plugin = twitch_live.TwitchLive.__new__(twitch_live.TwitchLive)
+        plugin.twitch_user_ids = {}
+
+        with patch.object(twitch_live.request, "urlopen") as urlopen:
+            self.assertEqual(
+                plugin.get_twitch_streamer_user_ids(["", "not a twitch login"]), {}
+            )
+
+        urlopen.assert_not_called()
+
+    def test_twitch_user_id_lookups_respect_the_batch_limit(self):
+        plugin = twitch_live.TwitchLive.__new__(twitch_live.TwitchLive)
+        plugin.twitch_user_ids = {}
+        plugin.twitch_api_access_token = "token"
+        plugin.twitch_api_client_id = "client"
+        descriptions = [f"streamer{index}" for index in range(101)]
+
+        with (
+            patch.object(twitch_live.request, "urlopen") as urlopen,
+            patch.object(twitch_live.json, "load", return_value={"data": []}),
+        ):
+            result = plugin.get_twitch_streamer_user_ids(descriptions)
+
+        self.assertEqual(urlopen.call_count, 2)
+        self.assertEqual(result, {description: None for description in descriptions})
+
+    def test_twitch_user_id_lookup_propagates_network_errors(self):
+        plugin = twitch_live.TwitchLive.__new__(twitch_live.TwitchLive)
+        plugin.twitch_user_ids = {}
+        plugin.twitch_api_access_token = "token"
+        plugin.twitch_api_client_id = "client"
+
+        with patch.object(
+            twitch_live.request,
+            "urlopen",
+            side_effect=twitch_live.error.URLError("down"),
+        ):
+            with self.assertRaises(twitch_live.error.URLError):
+                plugin.get_twitch_streamer_user_ids(["ada"])
+
+        self.assertEqual(plugin.twitch_user_ids, {})
+
+    def test_servergroups_are_cached_until_the_refresh_interval_expires(self):
+        connection = Mock()
+        connection.servergrouplist.return_value = [{"sgid": "6", "name": "Admin"}]
+
+        with patch.object(
+            servergroup_cache, "monotonic", side_effect=[10.0, 10.0, 11.0]
+        ):
+            self.assertEqual(
+                servergroup_cache.get_servergroups(connection),
+                ({"sgid": "6", "name": "Admin"},),
+            )
+            self.assertEqual(
+                servergroup_cache.get_servergroups(connection),
+                ({"sgid": "6", "name": "Admin"},),
+            )
+
+        connection.servergrouplist.assert_called_once_with()
+
     def test_empty_command_is_ignored(self):
         handler = command_handler.CommandHandler(Mock())
         with patch.object(teamspeak_bot, "send_msg_to_client") as send:
             handler.handle_command("   ", sender=7)
         send.assert_not_called()
+
+    def test_command_permission_uses_one_client_info_for_all_handlers(self):
+        connection = Mock()
+        handler = command_handler.CommandHandler(connection)
+        command = Mock(spec=[])
+        handler.add_handler(command, "test")
+        handler.add_handler(command, "test")
+        clientinfo = Mock()
+        clientinfo.is_in_servergroups.return_value = True
+
+        with patch.object(
+            command_handler.client_info, "ClientInfo", return_value=clientinfo
+        ) as info:
+            handler.handle_command("!test", sender=7)
+
+        info.assert_called_once_with(7, connection)
+        self.assertEqual(clientinfo.is_in_servergroups.call_count, 2)
+        self.assertEqual(command.call_count, 2)
+
+    def test_supplied_client_info_avoids_another_lookup(self):
+        handler = command_handler.CommandHandler(Mock())
+        command = Mock(spec=[])
+        handler.add_handler(command, "test")
+        clientinfo = Mock()
+        clientinfo.is_in_servergroups.return_value = True
+
+        with patch.object(command_handler.client_info, "ClientInfo") as info:
+            handler.handle_command("!test", sender=7, clientinfo=clientinfo)
+
+        info.assert_not_called()
+        command.assert_called_once()
+
+    def test_command_with_denied_permission_does_not_call_handler(self):
+        handler = command_handler.CommandHandler(Mock())
+        command = Mock(spec=[])
+        handler.add_handler(command, "test")
+        clientinfo = Mock()
+        clientinfo.is_in_servergroups.return_value = False
+
+        with patch.object(teamspeak_bot, "send_msg_to_client") as send:
+            handler.handle_command("!test", sender=7, clientinfo=clientinfo)
+
+        command.assert_not_called()
+        send.assert_called_once()
 
     def test_plain_text_is_rejected(self):
         handler = command_handler.CommandHandler(Mock())
@@ -129,6 +300,72 @@ class RuntimeBugTests(unittest.TestCase):
             handler._inform_observer(observer, event)
         logged.assert_called_once()
         handler._pending_observers.release.assert_called_once_with()
+
+    def test_coalesced_observer_has_only_one_pending_job_per_client(self):
+        event = SimpleNamespace(client_id=7, data={})
+        observer = Mock()
+        observer.event_coalesce_scope = "client"
+        handler = event_handler.EventHandler.__new__(event_handler.EventHandler)
+        handler.observers = {SimpleNamespace: {observer}}
+        handler._pending_observers = Mock()
+        handler._pending_observers.acquire.return_value = True
+        handler._coalesced_observer_keys = set()
+        handler._coalesced_observer_keys_lock = threading.Lock()
+        handler._executor = Mock()
+
+        handler.inform_all(event)
+        handler.inform_all(event)
+
+        handler._executor.submit.assert_called_once()
+        self.assertEqual(handler._coalesced_observer_keys, {(observer, 7)})
+
+    def test_global_coalescing_collapses_events_for_different_clients(self):
+        observer = Mock()
+        observer.event_coalesce_scope = "global"
+        handler = event_handler.EventHandler.__new__(event_handler.EventHandler)
+        handler.observers = {SimpleNamespace: {observer}}
+        handler._pending_observers = Mock()
+        handler._pending_observers.acquire.return_value = True
+        handler._coalesced_observer_keys = set()
+        handler._coalesced_observer_keys_lock = threading.Lock()
+        handler._executor = Mock()
+
+        handler.inform_all(SimpleNamespace(client_id=7, data={}))
+        handler.inform_all(SimpleNamespace(client_id=8, data={}))
+
+        handler._executor.submit.assert_called_once()
+
+    def test_queue_full_releases_the_coalesced_event_key(self):
+        event = SimpleNamespace(client_id=7, data={})
+        observer = Mock()
+        observer.event_coalesce_scope = "client"
+        handler = event_handler.EventHandler.__new__(event_handler.EventHandler)
+        handler.observers = {SimpleNamespace: {observer}}
+        handler._pending_observers = Mock()
+        handler._pending_observers.acquire.return_value = False
+        handler._coalesced_observer_keys = set()
+        handler._coalesced_observer_keys_lock = threading.Lock()
+        handler._executor = Mock()
+
+        handler.inform_all(event)
+
+        self.assertEqual(handler._coalesced_observer_keys, set())
+        handler._executor.submit.assert_not_called()
+
+    def test_uncoalesced_observer_receives_every_event(self):
+        observer = Mock(spec=[])
+        handler = event_handler.EventHandler.__new__(event_handler.EventHandler)
+        handler.observers = {SimpleNamespace: {observer}}
+        handler._pending_observers = Mock()
+        handler._pending_observers.acquire.return_value = True
+        handler._coalesced_observer_keys = set()
+        handler._coalesced_observer_keys_lock = threading.Lock()
+        handler._executor = Mock()
+
+        handler.inform_all(SimpleNamespace(client_id=7, data={}))
+        handler.inform_all(SimpleNamespace(client_id=7, data={}))
+
+        self.assertEqual(handler._executor.submit.call_count, 2)
 
     def test_multimove_moves_client_without_casting_client_dictionary(self):
         connection = Mock()

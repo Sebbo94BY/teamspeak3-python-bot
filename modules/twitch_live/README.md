@@ -36,6 +36,7 @@ This plugin supports the following options:
 | `auto_start` | `True` | Either if the plugin should automatically start when the Bot starts and it's configured or not. |
 | `enable_dry_run` | `False` | Set to `True`, if you want to test the plugin without executing the actual tasks. Instead it logs what it would have done. |
 | `frequency` | `5.0` | The frequency in seconds how often (and fast) the plugin should react (e.g. somebody goes live on twitch, every 5 seconds the bot would notice this and do something). |
+| `http_timeout` | `10.0` | Maximum seconds to wait for each Twitch API request before it fails. |
 | `twitch_live_servergroup_name` | `None` | The name of the servergroup, which should be un-/assigned to clients based on the Twitch stream status. |
 | `twitch_api_client_id` | `None` | Your personal Twitch API client ID. See [Configuration: Twitch: Register App](#twitch-register-app). |
 | `twitch_api_client_secret` | `None` | Your personal Twitch API client secret. See [Configuration: Twitch: Register App](#twitch-register-app). |
@@ -45,6 +46,7 @@ If you need to change some of these default options, simply add them to your `co
 ```
 [twitch_live]
 frequency: 60.0
+http_timeout: 10.0
 twitch_live_servergroup_name: Live@Twitch
 twitch_api_client_id: 1ec8e09a145fc972b5eed9d1deb51631
 twitch_api_client_secret: ca733c04c302365cc782283ed5b7d39a

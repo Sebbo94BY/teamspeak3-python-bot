@@ -5,6 +5,7 @@ import logging
 from ts3API.Events import TextMessageEvent
 
 # local imports
+from log_utils import create_log_handler
 import teamspeak_bot
 import client_info
 
@@ -21,7 +22,7 @@ class CommandHandler:
     logger = logging.getLogger(class_name)
     logger.propagate = 0
     logger.setLevel(logging.INFO)
-    file_handler = logging.FileHandler(f"logs/{class_name.lower()}.log", mode="a+")
+    file_handler = create_log_handler(f"logs/{class_name.lower()}.log")
     formatter = logging.Formatter("%(asctime)s: %(levelname)s: %(message)s")
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
@@ -68,7 +69,7 @@ class CommandHandler:
                     return True
         return False
 
-    def handle_command(self, msg, sender=0):
+    def handle_command(self, msg, sender=0, clientinfo=None):
         """
         Handle a new command by informing the corresponding handlers.
         :param msg: Command message.
@@ -121,11 +122,12 @@ class CommandHandler:
                 )
                 return
 
+        if clientinfo is None:
+            clientinfo = client_info.ClientInfo(sender, self.ts3conn)
+
         has_permissions = False
         for handler in handlers:
-            if self.check_permission(
-                handler, client_info.ClientInfo(sender, self.ts3conn)
-            ):
+            if self.check_permission(handler, clientinfo):
                 has_permissions = True
                 handler(sender, msg)
 
@@ -150,4 +152,6 @@ class CommandHandler:
                         str(cl_info.name),
                         str(event.message),
                     )
-                    self.handle_command(event.message, sender=event.invoker_id)
+                    self.handle_command(
+                        event.message, sender=event.invoker_id, clientinfo=cl_info
+                    )

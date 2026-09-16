@@ -1,9 +1,11 @@
 # standard imports
 import importlib
 import logging
+
 import sys
 
 # local imports
+from log_utils import create_log_handler
 from command_handler import CommandHandler
 from event_handler import EventHandler
 from helpers import strtobool
@@ -19,7 +21,7 @@ CLASS_NAME = "ModuleLoader"
 logger = logging.getLogger(CLASS_NAME)
 logger.propagate = 0
 logger.setLevel(logging.INFO)
-file_handler = logging.FileHandler(f"logs/{CLASS_NAME.lower()}.log", mode="a+")
+file_handler = create_log_handler(f"logs/{CLASS_NAME.lower()}.log")
 formatter = logging.Formatter("%(asctime)s: %(levelname)s: %(message)s")
 file_handler.setFormatter(formatter)
 logger.addHandler(file_handler)
@@ -121,6 +123,23 @@ def event(*event_types):
         return function
 
     return register_observer
+
+
+def coalesce_events(scope="client"):
+    """Mark an event observer to keep at most one pending job per scope.
+
+    ``client`` coalesces repeated events for one client; ``global`` coalesces all
+    pending events for an observer. This is opt-in because some observers need
+    every event, such as text-message commands.
+    """
+    if scope not in {"client", "global"}:
+        raise ValueError("Event coalescing scope must be 'client' or 'global'.")
+
+    def mark_observer(function):
+        function.event_coalesce_scope = scope
+        return function
+
+    return mark_observer
 
 
 def command(*command_list):

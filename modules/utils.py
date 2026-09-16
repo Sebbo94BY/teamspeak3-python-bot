@@ -245,7 +245,7 @@ def multi_move(sender, msg):
 
         return
 
-    logger.debug("Source channel IDs: %s.", str(source_channel_ids))
+    logger.debug("Source channel IDs: %s.", source_channel_ids)
 
     # get target channel ID
     target_channel_id = None
@@ -330,18 +330,18 @@ def multi_move(sender, msg):
 
     for client in all_clients:
         if int(client.get("client_type")) == 1:
-            logger.debug("Ignoring ServerQuery client: %s", str(client))
+            logger.debug("Ignoring ServerQuery client: %s", client)
             continue
 
         if int(client.get("cid")) not in source_channel_ids:
             logger.debug(
-                "Ignoring client as not member of any source channel: %s", str(client)
+                "Ignoring client as not member of any source channel: %s", client
             )
             continue
 
         logger.debug(
             "Client is member of a source channel. Adding to the move list: %s",
-            str(client),
+            client,
         )
         filtered_clients.append(client)
 
@@ -369,7 +369,7 @@ def multi_move(sender, msg):
         "Found %s clients in all respective source channels.",
         int(len(filtered_clients)),
     )
-    logger.debug("Client list to move: %s.", str(filtered_clients))
+    logger.debug("Client list to move: %s.", filtered_clients)
 
     # move all clients to the target channel
     for client in filtered_clients:
@@ -378,7 +378,7 @@ def multi_move(sender, msg):
                 logger.info(
                     "Would have moved the following client to the channel ID %s, if the dry-run would be disabled: %s",
                     int(target_channel_id),
-                    str(client),
+                    client,
                 )
             else:
                 ts3conn.clientmove(

@@ -1,5 +1,6 @@
 # standard imports
 import logging
+
 import threading
 import traceback
 from threading import Thread
@@ -14,8 +15,10 @@ from ts3API.TS3Connection import TS3QueryException
 from ts3API.utilities import TS3Exception
 
 # local imports
+from log_utils import create_log_handler
 from module_loader import setup_plugin, exit_plugin, command, event
 import teamspeak_bot
+from servergroup_cache import get_servergroups
 
 PLUGIN_VERSION = 0.3
 PLUGIN_COMMAND_NAME = "idlemover"
@@ -47,7 +50,7 @@ class IdleMover(Thread):
     logger = logging.getLogger(class_name)
     logger.propagate = 0
     logger.setLevel(logging.INFO)
-    file_handler = logging.FileHandler(f"logs/{class_name.lower()}.log", mode="a+")
+    file_handler = create_log_handler(f"logs/{class_name.lower()}.log")
     formatter = logging.Formatter("%(asctime)s: %(levelname)s: %(message)s")
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
@@ -108,13 +111,13 @@ class IdleMover(Thread):
             if int(client.get("client_type")) == 1:
                 self.logger.debug(
                     "update_client_list ignoring ServerQuery client: %s",
-                    str(client),
+                    client,
                 )
                 continue
 
             client_list.append(client)
 
-        self.logger.debug("Updated client list with idle times: %s", str(client_list))
+        self.logger.debug("Updated client list with idle times: %s", client_list)
 
         return client_list
 
@@ -154,7 +157,7 @@ class IdleMover(Thread):
             return servergroup_ids_to_ignore
 
         try:
-            servergroup_list = self.ts3conn.servergrouplist()
+            servergroup_list = get_servergroups(self.ts3conn)
         except TS3QueryException:
             self.logger.exception("Failed to get the list of available servergroups.")
             return servergroup_ids_to_ignore
@@ -263,17 +266,15 @@ class IdleMover(Thread):
             self.logger.debug("No client is connected to the server. Nothing todo.")
             return client_idle_list
 
-        self.logger.debug(
-            "get_idle_list current idle list: %s!", str(self.idling_clients)
-        )
+        self.logger.debug("get_idle_list current idle list: %s!", self.idling_clients)
 
         for client in client_list:
-            self.logger.debug("get_idle_list checking client: %s", str(client))
+            self.logger.debug("get_idle_list checking client: %s", client)
 
             if not all(key in client.keys() for key in ("client_idle_time", "cid")):
                 self.logger.warning(
                     "get_idle_list client is either missing `client_idle_time` or `cid`: %s!",
-                    str(client),
+                    client,
                 )
                 continue
 
@@ -282,7 +283,7 @@ class IdleMover(Thread):
             if int(client_cid) == int(self.afk_channel):
                 self.logger.debug(
                     "get_idle_list client is already in the afk_channel: %s!",
-                    str(client),
+                    client,
                 )
                 continue
 
@@ -290,7 +291,7 @@ class IdleMover(Thread):
                 if client_cid in self.channel_ids_to_ignore:
                     self.logger.debug(
                         "The client is in a channel, which should be ignored: %s",
-                        str(client),
+                        client,
                     )
                     continue
 
@@ -303,7 +304,7 @@ class IdleMover(Thread):
                         self.logger.debug(
                             "The client is in the servergroup sgid=%s, which should be ignored: %s",
                             int(client_servergroup_id),
-                            str(client),
+                            client,
                         )
                         client_is_in_group = True
                         break
@@ -331,14 +332,14 @@ class IdleMover(Thread):
                 self.logger.debug(
                     "get_idle_list client is less then %s seconds idle: %s!",
                     int(IDLE_TIME_SECONDS),
-                    str(client),
+                    client,
                 )
                 continue
 
-            self.logger.debug("get_idle_list adding client to list: %s!", str(client))
+            self.logger.debug("get_idle_list adding client to list: %s!", client)
             client_idle_list.append(client)
 
-        self.logger.debug("get_idle_list updated idle list: %s!", str(client_idle_list))
+        self.logger.debug("get_idle_list updated idle list: %s!", client_idle_list)
 
         return client_idle_list
 
@@ -448,14 +449,14 @@ class IdleMover(Thread):
 
         for client in idle_list:
             if DRY_RUN:
-                self.logger.info("I would have moved this client: %s", str(client))
+                self.logger.info("I would have moved this client: %s", client)
             else:
                 self.logger.info(
                     "Moving the client clid=%s client_nickname=%s to afk!",
                     int(client.get("clid", "-1")),
                     str(client.get("client_nickname", "-1")),
                 )
-                self.logger.debug("Client: %s", str(client))
+                self.logger.debug("Client: %s", client)
 
                 try:
                     self.ts3conn.clientmove(
@@ -470,7 +471,7 @@ class IdleMover(Thread):
                     client.get("cid", "0")
                 )
 
-        self.logger.debug("Idling clients: %s", str(self.idling_clients))
+        self.logger.debug("Idling clients: %s", self.idling_clients)
 
     def move_all_afk(self):
         """
@@ -499,7 +500,7 @@ class IdleMover(Thread):
             self.logger.error(
                 "Error moving client! clid=%s not found in %s",
                 int(client_id),
-                str(self.idling_clients),
+                self.idling_clients,
             )
         except TS3Exception:
             self.logger.exception("Error moving client! clid=%s", int(client_id))
@@ -514,9 +515,9 @@ class IdleMover(Thread):
             return
 
         self.logger.debug("Moving clients back")
-        self.logger.debug("Backlist is: %s", str(back_list))
+        self.logger.debug("Backlist is: %s", back_list)
         self.logger.debug(
-            "Saved client idle list keys are: %s\n", str(self.idling_clients.keys())
+            "Saved client idle list keys are: %s\n", self.idling_clients.keys()
         )
 
         try:
