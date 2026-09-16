@@ -235,13 +235,13 @@ class Ts3Bot:
         self.sshtimeout = sshtimeout
         self.sshtimeoutlimit = sshtimeoutlimit
 
-        try:
-            os.makedirs(os.path.dirname(os.path.realpath(self.host_key_file)))
-        except FileExistsError:
-            pass
+        if self.host_key_file:
+            os.makedirs(os.path.dirname(os.path.realpath(self.host_key_file)), exist_ok=True)
 
         self.connect()
         self.setup_bot()
+        if self.ts3conn is None:
+            raise RuntimeError("Bot setup failed; connection was closed.")
         # Load modules
         module_loader.load_modules(self, plugins)
         self.ts3conn.start_keepalive_loop()

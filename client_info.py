@@ -16,7 +16,7 @@ class ClientInfo:
         if client_id == "-1":
             logger.error("Trying to get ClientInfo of clid=-1")
             logger.warning("Giving out mock object ...")
-            client_data = [{}]
+            client_data = {}
         else:
             client_data = ts3conn.clientinfo(client_id)
         self._name = client_data.get("client_nickname", "")

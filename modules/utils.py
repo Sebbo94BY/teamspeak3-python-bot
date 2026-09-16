@@ -188,6 +188,8 @@ def multi_move(sender, msg):
                         int(sender),
                     )
 
+                return
+
             for channel in all_channels:
                 source_channel_ids.append(int(channel.get("cid", "-1")))
         else:
@@ -215,6 +217,8 @@ def multi_move(sender, msg):
                         "Failed to send the info message as textmessage to clid=%s.",
                         int(sender),
                     )
+
+                return
 
     if len(source_channel_ids) == 0:
         logger.error(
@@ -247,7 +251,7 @@ def multi_move(sender, msg):
     target_channel_id = None
 
     try:
-        target_channel_id = int(ts3conn.channelfind(target_channel)[0].get("cid", "-1"))
+        matching_target_channels = ts3conn.channelfind(target_channel)
     except TS3Exception:
         logger.exception("Error getting `%s` channel.", str(target_channel))
 
@@ -263,7 +267,9 @@ def multi_move(sender, msg):
                 int(sender),
             )
 
-    if target_channel_id is None or not isinstance(target_channel_id, int):
+        return
+
+    if len(matching_target_channels) != 1:
         logger.error(
             "Could not find any target channel for the given channel name pattern: %s",
             str(target_channel),
@@ -288,30 +294,7 @@ def multi_move(sender, msg):
 
         return
 
-    if isinstance(target_channel_id, list):
-        logger.error(
-            "Found multiple target channels for the given channel name pattern, but only one is supported: %s",
-            str(target_channel),
-        )
-
-        try:
-            teamspeak_bot.send_msg_to_client(
-                ts3conn,
-                sender,
-                f"Found multiple target channels for the given channel name pattern, but only one is supported: {str(target_channel)}",
-            )
-            teamspeak_bot.send_msg_to_client(
-                ts3conn,
-                sender,
-                "Please ensure, that the channel name pattern is correct and matches only a single channel.",
-            )
-        except TS3QueryException:
-            logger.error(
-                "Failed to send the info message as textmessage to clid=%s.",
-                int(sender),
-            )
-
-        return
+    target_channel_id = int(matching_target_channels[0].get("cid", "-1"))
 
     logger.debug("Target channel ID: %s.", int(target_channel_id))
 
@@ -347,18 +330,18 @@ def multi_move(sender, msg):
 
     for client in all_clients:
         if int(client.get("client_type")) == 1:
-            logger.debug("Ignoring ServerQuery client: %s", int(client))
+            logger.debug("Ignoring ServerQuery client: %s", str(client))
             continue
 
         if int(client.get("cid")) not in source_channel_ids:
             logger.debug(
-                "Ignoring client as not member of any source channel: %s", int(client)
+                "Ignoring client as not member of any source channel: %s", str(client)
             )
             continue
 
         logger.debug(
             "Client is member of a source channel. Adding to the move list: %s",
-            int(client),
+            str(client),
         )
         filtered_clients.append(client)
 

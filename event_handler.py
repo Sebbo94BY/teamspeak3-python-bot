@@ -112,13 +112,19 @@ class EventHandler:
         :param evt: Event to inform observers of.
         """
         for observer in self.get_obs_for_event(evt):
-            try:
-                threading.Thread(target=observer(evt)).start()
-            except BaseException:
-                EventHandler.logger.exception(
-                    "Exception while informing %s of Event of type "
-                    "%s\nOriginal data: %s",
-                    str(observer),
-                    str(type(evt)),
-                    str(evt.data),
-                )
+            threading.Thread(
+                target=self._inform_observer, args=(observer, evt), daemon=True
+            ).start()
+
+    @staticmethod
+    def _inform_observer(observer, evt):
+        """Run an observer while retaining its exceptions in the bot log."""
+        try:
+            observer(evt)
+        except BaseException:
+            EventHandler.logger.exception(
+                "Exception while informing %s of Event of type %s\nOriginal data: %s",
+                str(observer),
+                str(type(evt)),
+                str(evt.data),
+            )

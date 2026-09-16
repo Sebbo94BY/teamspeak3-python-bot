@@ -189,6 +189,9 @@ class AfkMover(Thread):
                         str(client),
                     )
                     continue
+                self.logger.exception("Failed to get the previous channel information.")
+                self.fallback_action(client_id)
+                continue
 
             channel_details = None
             for channel in channel_list:
@@ -259,6 +262,7 @@ class AfkMover(Thread):
             channel_list = self.ts3conn.channellist()
         except TS3QueryException:
             self.logger.exception("Failed to get the list of available channels.")
+            return channel_ids_to_ignore
 
         for channel in channel_list:
             if any(
@@ -283,6 +287,7 @@ class AfkMover(Thread):
             servergroup_list = self.ts3conn.servergrouplist()
         except TS3QueryException:
             self.logger.exception("Failed to get the list of available servergroups.")
+            return
 
         self.servergroup_ids_to_ignore.clear()
         for servergroup in servergroup_list:
@@ -514,8 +519,10 @@ def stop_plugin(_sender=None, _msg=None):
     Stop the AfkMover by setting the PLUGIN_STOPPER signal and undefining the mover.
     """
     global PLUGIN_INFO
-    PLUGIN_STOPPER.set()
-    PLUGIN_INFO = None
+    if PLUGIN_INFO is not None:
+        PLUGIN_STOPPER.set()
+        PLUGIN_INFO.join()
+        PLUGIN_INFO = None
 
 
 @command(f"{PLUGIN_COMMAND_NAME} restart")
