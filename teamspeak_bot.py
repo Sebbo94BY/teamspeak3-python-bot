@@ -53,6 +53,8 @@ class Ts3Bot:
         :rtype: int
         """
         ret = self.ts3conn.channelfind(pattern=name)
+        if not ret:
+            raise LookupError(f"No channel found matching `{name}`.")
         return int(ret[0]["cid"])
 
     @staticmethod
@@ -131,7 +133,7 @@ class Ts3Bot:
         try:
             try:
                 self.ts3conn.clientupdate(["client_nickname=" + self.bot_name])
-            except TS3QueryException as query_exception:
+            except (TS3QueryException, LookupError) as query_exception:
                 if query_exception.type == TS3QueryExceptionType.CLIENT_NICKNAME_INUSE:
                     self.logger.info(
                         "The choosen bot nickname is already in use, keeping the default nickname"
@@ -162,7 +164,7 @@ class Ts3Bot:
                     )
                     raise query_exception
 
-        except TS3QueryException:
+        except (TS3QueryException, LookupError):
             self.logger.exception("Error on setting up client")
             self.ts3conn.quit()
             self.ts3conn = None
@@ -181,8 +183,12 @@ class Ts3Bot:
             sys.exit(1)
 
     def __del__(self):
-        if self.ts3conn is not None:
-            self.ts3conn.quit()
+        event_handler_instance = getattr(self, "event_handler", None)
+        if event_handler_instance is not None:
+            event_handler_instance.close()
+        ts3conn = getattr(self, "ts3conn", None)
+        if ts3conn is not None:
+            ts3conn.quit()
 
     def __init__(
         self,
@@ -236,7 +242,9 @@ class Ts3Bot:
         self.sshtimeoutlimit = sshtimeoutlimit
 
         if self.host_key_file:
-            os.makedirs(os.path.dirname(os.path.realpath(self.host_key_file)), exist_ok=True)
+            os.makedirs(
+                os.path.dirname(os.path.realpath(self.host_key_file)), exist_ok=True
+            )
 
         self.connect()
         self.setup_bot()

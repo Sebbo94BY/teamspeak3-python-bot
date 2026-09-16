@@ -2,6 +2,9 @@
 import logging
 import threading
 
+# pylint: disable=consider-using-with
+from concurrent.futures import ThreadPoolExecutor
+
 # third-party imports
 from ts3API.Events import (
     TextMessageEvent,
@@ -36,6 +39,10 @@ class EventHandler:
         self.ts3conn = ts3conn
         self.command_handler = command_handler
         self.observers = {}
+        self._pending_observers = threading.BoundedSemaphore(100)
+        self._executor = ThreadPoolExecutor(
+            max_workers=4, thread_name_prefix="ts3-event"
+        )
         self.add_observer(self.command_handler.inform, TextMessageEvent)
 
     def on_event(self, _sender, **kw):
@@ -112,12 +119,15 @@ class EventHandler:
         :param evt: Event to inform observers of.
         """
         for observer in self.get_obs_for_event(evt):
-            threading.Thread(
-                target=self._inform_observer, args=(observer, evt), daemon=True
-            ).start()
+            if not self._pending_observers.acquire(blocking=False):
+                EventHandler.logger.warning(
+                    "Dropping event of type %s because the observer queue is full.",
+                    str(type(evt)),
+                )
+                continue
+            self._executor.submit(self._inform_observer, observer, evt)
 
-    @staticmethod
-    def _inform_observer(observer, evt):
+    def _inform_observer(self, observer, evt):
         """Run an observer while retaining its exceptions in the bot log."""
         try:
             observer(evt)
@@ -128,3 +138,9 @@ class EventHandler:
                 str(type(evt)),
                 str(evt.data),
             )
+        finally:
+            self._pending_observers.release()
+
+    def close(self):
+        """Stop the observer executor during bot shutdown."""
+        self._executor.shutdown(wait=True)
