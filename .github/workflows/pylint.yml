@@ -21,7 +21,7 @@ jobs:
     name: PyLint (Python ${{ matrix.python_versions }})
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: set up python ${{ matrix.python_versions }}
         uses: actions/setup-python@v6
