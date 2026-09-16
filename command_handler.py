@@ -5,6 +5,7 @@ import logging
 from ts3API.Events import TextMessageEvent
 
 # local imports
+from log_utils import create_log_handler
 import teamspeak_bot
 import client_info
 
@@ -21,7 +22,7 @@ class CommandHandler:
     logger = logging.getLogger(class_name)
     logger.propagate = 0
     logger.setLevel(logging.INFO)
-    file_handler = logging.FileHandler(f"logs/{class_name.lower()}.log", mode="a+")
+    file_handler = create_log_handler(f"logs/{class_name.lower()}.log")
     formatter = logging.Formatter("%(asctime)s: %(levelname)s: %(message)s")
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)

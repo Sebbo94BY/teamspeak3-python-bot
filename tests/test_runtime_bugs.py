@@ -6,6 +6,8 @@ import os
 import sys
 import types
 import unittest
+from logging.handlers import TimedRotatingFileHandler
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -61,6 +63,7 @@ import event_handler
 import module_loader
 import teamspeak_bot
 import command_handler
+import log_utils
 import servergroup_cache
 
 
@@ -83,6 +86,13 @@ from modules.twitch_live import main as twitch_live
 
 
 class RuntimeBugTests(unittest.TestCase):
+    def test_logs_rotate_daily_with_finite_retention(self):
+        with TemporaryDirectory() as tempdir:
+            handler = log_utils.create_log_handler(f"{tempdir}/bot.log")
+            self.assertIsInstance(handler, TimedRotatingFileHandler)
+            self.assertEqual(handler.backupCount, 14)
+            handler.close()
+
     def test_twitch_requests_have_a_timeout(self):
         plugin = twitch_live.TwitchLive.__new__(twitch_live.TwitchLive)
         plugin.twitch_api_expires_at = None

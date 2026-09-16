@@ -2,6 +2,7 @@
 
 # standard imports
 import logging
+
 import os
 import sys
 import threading
@@ -10,6 +11,7 @@ import threading
 from ts3API.utilities import TS3ConnectionClosedException
 
 # local imports
+from log_utils import create_log_handler
 import teamspeak_bot
 
 LOGGER = None
@@ -67,7 +69,7 @@ def main():
         LOGGER = logging.getLogger(class_name)
         LOGGER.propagate = 0
         LOGGER.setLevel(logging.INFO)
-        file_handler = logging.FileHandler(f"logs/{class_name.lower()}.log", mode="a+")
+        file_handler = create_log_handler(f"logs/{class_name.lower()}.log")
         formatter = logging.Formatter("%(asctime)s: %(levelname)s: %(message)s")
         file_handler.setFormatter(formatter)
         LOGGER.addHandler(file_handler)

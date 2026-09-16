@@ -1,9 +1,11 @@
 # standard imports
 import importlib
 import logging
+
 import sys
 
 # local imports
+from log_utils import create_log_handler
 from command_handler import CommandHandler
 from event_handler import EventHandler
 from helpers import strtobool
@@ -19,7 +21,7 @@ CLASS_NAME = "ModuleLoader"
 logger = logging.getLogger(CLASS_NAME)
 logger.propagate = 0
 logger.setLevel(logging.INFO)
-file_handler = logging.FileHandler(f"logs/{CLASS_NAME.lower()}.log", mode="a+")
+file_handler = create_log_handler(f"logs/{CLASS_NAME.lower()}.log")
 formatter = logging.Formatter("%(asctime)s: %(levelname)s: %(message)s")
 file_handler.setFormatter(formatter)
 logger.addHandler(file_handler)

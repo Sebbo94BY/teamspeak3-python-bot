@@ -1,5 +1,6 @@
 # standard imports
 import logging
+
 import threading
 from threading import Thread
 from typing import Union
@@ -16,6 +17,7 @@ from ts3API.TS3Connection import TS3QueryException
 from ts3API.utilities import TS3Exception
 
 # local imports
+from log_utils import create_log_handler
 from module_loader import setup_plugin, exit_plugin, command, event
 import teamspeak_bot
 from servergroup_cache import get_servergroups
@@ -45,7 +47,7 @@ class SwitchSupporterChannelStatus(Thread):
     logger = logging.getLogger(class_name)
     logger.propagate = 0
     logger.setLevel(logging.INFO)
-    file_handler = logging.FileHandler(f"logs/{class_name.lower()}.log", mode="a+")
+    file_handler = create_log_handler(f"logs/{class_name.lower()}.log")
     formatter = logging.Formatter("%(asctime)s: %(levelname)s: %(message)s")
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
