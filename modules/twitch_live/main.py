@@ -30,6 +30,7 @@ BOT: teamspeak_bot.Ts3Bot
 AUTO_START = True
 DRY_RUN = False  # log instead of performing actual actions
 CHECK_FREQUENCY_SECONDS = 5.0
+HTTP_TIMEOUT_SECONDS = 10.0
 SERVERGROUP_NAME = None  # The servergroup name, which should get un-/assigned from/to clients based on their Twitch stream status
 API_CLIENT_ID = None  # The Twitch API client ID
 API_CLIENT_SECRET = None  # The Twitch API client secret
@@ -115,13 +116,13 @@ class TwitchLive(Thread):
         )
 
         try:
-            with request.urlopen(api_request) as api_response:
+            with request.urlopen(api_request, timeout=HTTP_TIMEOUT_SECONDS) as api_response:
                 api_response = json.load(api_response)
                 self.twitch_api_access_token = api_response["access_token"]
                 self.twitch_api_expires_at = datetime.now() + timedelta(
                     seconds=api_response["expires_in"]
                 )
-        except error.HTTPError:
+        except (error.HTTPError, error.URLError, TimeoutError):
             self.logger.exception("Failed to get a new Twitch API OAuth Access Token.")
             raise
 
@@ -224,11 +225,11 @@ class TwitchLive(Thread):
         api_request.add_header("Client-Id", str(self.twitch_api_client_id))
 
         try:
-            with request.urlopen(api_request) as api_response:
+            with request.urlopen(api_request, timeout=HTTP_TIMEOUT_SECONDS) as api_response:
                 api_response = json.load(api_response)
-        except error.HTTPError as http_error:
+        except (error.HTTPError, error.URLError, TimeoutError) as http_error:
             # HTTP 400: Bad Request
-            if int(http_error.code) == 400:
+            if isinstance(http_error, error.HTTPError) and int(http_error.code) == 400:
                 self.logger.debug(
                     "An invalid client description was provided: %s",
                     str(client_description),
@@ -304,9 +305,9 @@ class TwitchLive(Thread):
         twitch_stream_online = False
 
         try:
-            with request.urlopen(api_request) as api_response:
+            with request.urlopen(api_request, timeout=HTTP_TIMEOUT_SECONDS) as api_response:
                 api_response = json.load(api_response)
-        except error.HTTPError:
+        except (error.HTTPError, error.URLError, TimeoutError):
             self.logger.exception(
                 "Failed to get stream information for Twitch streamer: {str(client)}"
             )
@@ -464,6 +465,7 @@ def setup(
     auto_start=AUTO_START,
     enable_dry_run=DRY_RUN,
     frequency=CHECK_FREQUENCY_SECONDS,
+    http_timeout=HTTP_TIMEOUT_SECONDS,
     twitch_live_servergroup_name=SERVERGROUP_NAME,
     twitch_api_client_id=API_CLIENT_ID,
     twitch_api_client_secret=API_CLIENT_SECRET,
@@ -471,12 +473,15 @@ def setup(
     """
     Sets up this plugin.
     """
-    global BOT, AUTO_START, DRY_RUN, CHECK_FREQUENCY_SECONDS, SERVERGROUP_NAME, API_CLIENT_ID, API_CLIENT_SECRET
+    global BOT, AUTO_START, DRY_RUN, CHECK_FREQUENCY_SECONDS, HTTP_TIMEOUT_SECONDS, SERVERGROUP_NAME, API_CLIENT_ID, API_CLIENT_SECRET
 
     BOT = ts3bot
     AUTO_START = auto_start
     DRY_RUN = enable_dry_run
     CHECK_FREQUENCY_SECONDS = frequency
+    HTTP_TIMEOUT_SECONDS = float(http_timeout)
+    if HTTP_TIMEOUT_SECONDS <= 0:
+        raise ValueError("http_timeout must be greater than zero.")
     SERVERGROUP_NAME = twitch_live_servergroup_name
     API_CLIENT_ID = twitch_api_client_id
     API_CLIENT_SECRET = twitch_api_client_secret

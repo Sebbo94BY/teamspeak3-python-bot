@@ -1,6 +1,6 @@
 """Regression tests for runtime failures in bot and plugin control paths."""
 
-# pylint: disable=attribute-defined-outside-init,missing-class-docstring,missing-function-docstring,redefined-outer-name,wrong-import-position
+# pylint: disable=attribute-defined-outside-init,missing-class-docstring,missing-function-docstring,redefined-outer-name,too-many-public-methods,wrong-import-position
 import logging
 import os
 import sys
@@ -79,9 +79,22 @@ from modules.afk_mover import main as afk_mover
 from modules.channel_manager import main as channel_manager
 from modules.idle_mover import main as idle_mover
 from modules.inform_team_about_newbie import main as newbie_notifier
+from modules.twitch_live import main as twitch_live
 
 
 class RuntimeBugTests(unittest.TestCase):
+    def test_twitch_requests_have_a_timeout(self):
+        plugin = twitch_live.TwitchLive.__new__(twitch_live.TwitchLive)
+        plugin.twitch_api_expires_at = None
+
+        with patch.object(
+            twitch_live.request, "urlopen", side_effect=TimeoutError
+        ) as urlopen:
+            with self.assertRaises(TimeoutError):
+                plugin.get_oauth_access_token()
+
+        self.assertEqual(urlopen.call_args.kwargs["timeout"], 10.0)
+
     def test_servergroups_are_cached_until_the_refresh_interval_expires(self):
         connection = Mock()
         connection.servergrouplist.return_value = [{"sgid": "6", "name": "Admin"}]
