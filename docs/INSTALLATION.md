@@ -12,7 +12,7 @@ Hardware (minimum):
 Software:
 
 - [Git](https://git-scm.com/)
-- [Python 3](https://www.python.org/)
+- [Python 3.11 or newer](https://www.python.org/)
   - [venv](https://docs.python.org/3/library/venv.html) (usually an extra package)
   - [pip](https://pip.pypa.io/en/stable/installation/) (usually a part of Python)
 - [TeamSpeak 3 Server (TS3)](https://teamspeak.com/en/downloads/#server)

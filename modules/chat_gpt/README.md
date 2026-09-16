@@ -39,12 +39,14 @@ This plugin supports the following options:
 | `auto_start` | `True` | Either if the plugin should automatically start when the Bot starts and it's configured or not. |
 | `enable_dry_run` | `False` | Set to `True`, if you want to test the plugin without executing the actual tasks. Instead it logs what it would have done. |
 | `openai_api_key` | `None` | Your personal OpenAI API key. See [Configuration: OpenAI: Create API Key](#openai-create-api-key). |
+| `openai_model` | `gpt-6-astra` | The OpenAI Responses API model used to answer requests with medium reasoning effort. |
 
 If you need to change some of these default options, simply add them to your `config.ini` under the respective `ModuleName` section:
 
 ```
 [chat_gpt]
-openai_api_key: mm-4Qgt3cxJEAf6bnmPTWTSchD8gjgXffz4QeeLy4XSxbnZZsLA
+openai_api_key: your_api_key
+openai_model: gpt-6-astra
 ```
 
 Please keep in mind, that you need to reload the plugin afterwards. Either by restarting the entire bot or by using a plugin command, if it has one.
