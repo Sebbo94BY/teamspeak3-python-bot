@@ -142,13 +142,13 @@ class TwitchLive(Thread):
                 if int(client.get("client_type")) == 1:
                     self.logger.debug(
                         "update_client_list ignoring ServerQuery client: %s",
-                        str(client),
+                        client,
                     )
                     continue
 
                 client_list.append(client)
 
-            self.logger.debug("client_list: %s", str(client_list))
+            self.logger.debug("client_list: %s", client_list)
         except TS3Exception:
             self.logger.exception("Error getting client list!")
 
@@ -186,7 +186,7 @@ class TwitchLive(Thread):
         except TS3Exception:
             self.logger.exception("Error getting client list!")
 
-        self.logger.debug("client_list: %s", str(client_list))
+        self.logger.debug("client_list: %s", client_list)
 
         return client_list
 
@@ -290,7 +290,7 @@ class TwitchLive(Thread):
         Checks if the Twitch streamer is currently online or offline and assigns or removes the respective servergroup to / from the client.
         :param client: Client information (clid, Twitch user Id)
         """
-        self.logger.debug("Getting online status of Twitch streamer: `%s`", str(client))
+        self.logger.debug("Getting online status of Twitch streamer: `%s`", client)
 
         api_request = request.Request(
             f"https://api.twitch.tv/helix/streams?user_id={client['twitch_user_id']}",

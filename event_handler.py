@@ -66,7 +66,7 @@ class EventHandler:
         elif isinstance(parsed_event, ClientMovedSelfEvent):
             logging.debug(type(parsed_event))
         elif isinstance(parsed_event, ServerEditedEvent):
-            logging.debug("Event of type %s", str(type(parsed_event)))
+            logging.debug("Event of type %s", type(parsed_event))
             logging.debug(parsed_event.changed_properties)
 
         # Inform all observers

@@ -316,7 +316,7 @@ class PokeClientOnChannelJoin(Thread):
             self.logger.debug("No client has been provided. Nothing todo!")
             return
 
-        self.logger.debug("Received an event for this client: %s", str(client))
+        self.logger.debug("Received an event for this client: %s", client)
 
         channel_config = None
         for config in self.channel_configs:
@@ -340,7 +340,7 @@ class PokeClientOnChannelJoin(Thread):
         try:
             client_info = self.ts3conn.clientinfo(client.clid)
         except AttributeError:
-            self.logger.exception("The client has no clid: %s.", str(client))
+            self.logger.exception("The client has no clid: %s.", client)
             raise
         except TS3Exception:
             self.logger.exception(

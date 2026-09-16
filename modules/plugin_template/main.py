@@ -63,7 +63,7 @@ class PluginTemplate(Thread):
         """
         try:
             self.client_list = self.ts3conn.clientlist()
-            self.logger.debug("client_list: %s", str(self.client_list))
+            self.logger.debug("client_list: %s", self.client_list)
         except TS3Exception:
             self.logger.exception("Error while getting client list!")
             self.client_list = []
@@ -81,43 +81,41 @@ class PluginTemplate(Thread):
         for client in self.client_list:
             if "clid" not in client:
                 self.logger.error(
-                    "Error, because the following client has no clid: %s", str(client)
+                    "Error, because the following client has no clid: %s", client
                 )
                 continue
 
             if "client_type" not in client:
                 self.logger.error(
                     "Error, because the following client has no client_type: %s",
-                    str(client),
+                    client,
                 )
                 continue
 
             if int(client["client_type"]) == 1:
                 self.logger.debug(
                     "Skipping the following client as it is a ServerQuery client: %s",
-                    str(client),
+                    client,
                 )
                 continue
 
             if DRY_RUN:
                 self.logger.info(
                     "I would have sent a textmessage to this client, when dry-run would be disabled: %s",
-                    str(client),
+                    client,
                 )
             else:
-                self.logger.debug(
-                    "Sending the following client a message: %s", str(client)
-                )
+                self.logger.debug("Sending the following client a message: %s", client)
 
                 try:
                     teamspeak_bot.send_msg_to_client(
                         BOT.ts3conn, client["clid"], "Hello World!"
                     )
                 except AttributeError:
-                    self.logger.exception("AttributeError: %s", str(client))
+                    self.logger.exception("AttributeError: %s", client)
                 except TS3Exception:
                     self.logger.exception(
-                        "Error while sending a message to the client: %s", str(client)
+                        "Error while sending a message to the client: %s", client
                     )
 
     def loop_until_stopped(self):

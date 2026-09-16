@@ -98,13 +98,13 @@ class KickInactiveClients(Thread):
                 if int(client.get("client_type")) == 1:
                     self.logger.debug(
                         "update_client_list ignoring ServerQuery client: %s",
-                        str(client),
+                        client,
                     )
                     continue
 
                 self.idle_list.append(client)
 
-            self.logger.debug("update_idle_list: %s", str(self.idle_list))
+            self.logger.debug("update_idle_list: %s", self.idle_list)
         except TS3Exception:
             self.logger.exception("Error getting client list with times!")
             self.idle_list = []
@@ -176,24 +176,24 @@ class KickInactiveClients(Thread):
             self.logger.debug("get_idle_list idle_list is None!")
             return []
 
-        self.logger.debug("get_idle_list current idle_list: %s!", str(self.idle_list))
+        self.logger.debug("get_idle_list current idle_list: %s!", self.idle_list)
 
         client_idle_list = []
         for client in self.idle_list:
-            self.logger.debug("get_idle_list checking client: %s", str(client))
+            self.logger.debug("get_idle_list checking client: %s", client)
 
             if "cid" not in client.keys():
-                self.logger.error("get_idle_list client without cid: %s!", str(client))
+                self.logger.error("get_idle_list client without cid: %s!", client)
                 continue
 
             if "client_idle_time" not in client.keys():
                 self.logger.error(
-                    "get_idle_list client without client_idle_time: %s!", str(client)
+                    "get_idle_list client without client_idle_time: %s!", client
                 )
                 continue
 
             if client.get("client_type") == "1":
-                self.logger.debug("Ignoring ServerQuery client: %s", str(client))
+                self.logger.debug("Ignoring ServerQuery client: %s", client)
                 continue
 
             if SERVERGROUPS_TO_EXCLUDE is not None:
@@ -205,7 +205,7 @@ class KickInactiveClients(Thread):
                         self.logger.debug(
                             "The client is in the servergroup sgid=%s, which should be ignored: %s",
                             int(client_servergroup_id),
-                            str(client),
+                            client,
                         )
                         client_is_in_group = True
                         break
@@ -217,14 +217,14 @@ class KickInactiveClients(Thread):
                 self.logger.debug(
                     "get_idle_list client is less or equal then %s seconds idle: %s!",
                     int(IDLE_TIME_SECONDS),
-                    str(client),
+                    client,
                 )
                 continue
 
-            self.logger.debug("get_idle_list adding client to list: %s!", str(client))
+            self.logger.debug("get_idle_list adding client to list: %s!", client)
             client_idle_list.append(client)
 
-        self.logger.debug("get_idle_list updated idle_list: %s!", str(client_idle_list))
+        self.logger.debug("get_idle_list updated idle_list: %s!", client_idle_list)
 
         return client_idle_list
 
@@ -252,11 +252,11 @@ class KickInactiveClients(Thread):
             if DRY_RUN:
                 self.logger.info(
                     "I would have kicked the following client from the server, when the dry-run would be disabled: %s",
-                    str(client),
+                    client,
                 )
             else:
                 self.logger.info(
-                    "Kicking the following client from the server: %s", str(client)
+                    "Kicking the following client from the server: %s", client
                 )
 
                 try:

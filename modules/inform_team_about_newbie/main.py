@@ -128,7 +128,7 @@ class InformTeamAboutNewbie(Thread):
         servergroup = None
         for group in servergroups:
             if int(group.get("type")) == 0:
-                self.logger.debug("Ignoring servergroup template: %s", str(group))
+                self.logger.debug("Ignoring servergroup template: %s", group)
                 continue
 
             if group.get("name") == name:
@@ -274,14 +274,14 @@ class InformTeamAboutNewbie(Thread):
             if int(client.get("client_type")) == 1:
                 self.logger.debug(
                     "update_client_list ignoring ServerQuery client: %s",
-                    str(client),
+                    client,
                 )
                 continue
 
             if client.get("client_database_id") not in team_member_database_id_list:
                 self.logger.debug(
                     "The following client is not member of any team servergroup: %s",
-                    str(client),
+                    client,
                 )
                 continue
 
