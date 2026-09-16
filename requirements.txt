@@ -2,12 +2,12 @@
 ts3API[ssh]==0.9.4
 
 # https://github.com/openai/openai-python
-openai==0.28.1
+openai==3.14.1
 
 # Required for the GitHub workflow "PyLint" and when writing new code.
 # Should be pinned to a specific version as newer versions might have new or changed linting rules.
-pylint==2.17.7
+pylint==4.0.8
 
 # Only for fixing this Pylint error: ModuleNotFoundError: No module named 'typing_extensions'
 # See https://github.com/Sebi94nbg/teamspeak3-python-bot/actions/runs/3864557425/jobs/6587510172
-typing_extensions==4.15.0
+typing_extensions==4.16.0

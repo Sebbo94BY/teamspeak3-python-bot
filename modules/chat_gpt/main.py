@@ -5,14 +5,14 @@ from threading import Thread
 from typing import Union
 
 # third-party imports
+from openai import AuthenticationError, OpenAI
 from ts3API.utilities import TS3Exception
-import openai
 
 # local imports
 from module_loader import setup_plugin, exit_plugin, command, group
 import teamspeak_bot
 
-PLUGIN_VERSION = 0.1
+PLUGIN_VERSION = 0.2
 PLUGIN_COMMAND_NAME = "chatgpt"
 PLUGIN_INFO: Union[None, "ChatGPT"] = None
 PLUGIN_STOPPER = threading.Event()
@@ -22,6 +22,7 @@ BOT: teamspeak_bot.Ts3Bot
 AUTO_START = True
 DRY_RUN = False  # log instead of performing actual actions
 OPENAI_API_KEY = None  # The OpenAI API key
+OPENAI_MODEL = "gpt-6-astra"
 
 
 class ChatGPT(Thread):
@@ -54,6 +55,7 @@ class ChatGPT(Thread):
         self.ts3conn = ts3conn
 
         self.openai_api_key = OPENAI_API_KEY
+        self.openai_model = OPENAI_MODEL
 
 
 @command(f"{PLUGIN_COMMAND_NAME} ask")
@@ -88,19 +90,15 @@ def ask_chatgpt(sender=None, msg=None):
             "Error while sending the plugin version as a message to the client!"
         )
 
-    openai.api_key = str(PLUGIN_INFO.openai_api_key)
-    model_engine = "text-davinci-003"
+    client = OpenAI(api_key=str(PLUGIN_INFO.openai_api_key))
 
     try:
-        completion = openai.Completion.create(
-            engine=model_engine,
-            prompt=chatgpt_prompt,
-            max_tokens=1024,
-            n=1,
-            stop=None,
-            temperature=0.5,
+        completion = client.responses.create(
+            model=PLUGIN_INFO.openai_model,
+            input=chatgpt_prompt,
+            reasoning={"effort": "medium"},
         )
-    except openai.error.AuthenticationError as auth_error:
+    except AuthenticationError as auth_error:
         ChatGPT.logger.error("Authentication failed: %s", str(auth_error))
 
         try:
@@ -117,8 +115,8 @@ def ask_chatgpt(sender=None, msg=None):
         return
 
     try:
-        chatgpt_response = completion.choices[0].text.strip("\n")
-    except IndexError:
+        chatgpt_response = completion.output_text.strip()
+    except (AttributeError, TypeError):
         ChatGPT.logger.error("ChatGPT did not return any choices: %s", str(completion))
 
         try:
@@ -212,16 +210,18 @@ def setup(
     auto_start=AUTO_START,
     enable_dry_run=DRY_RUN,
     openai_api_key=OPENAI_API_KEY,
+    openai_model=OPENAI_MODEL,
 ):
     """
     Sets up this plugin.
     """
-    global BOT, AUTO_START, DRY_RUN, OPENAI_API_KEY
+    global BOT, AUTO_START, DRY_RUN, OPENAI_API_KEY, OPENAI_MODEL
 
     BOT = ts3bot
     AUTO_START = auto_start
     DRY_RUN = enable_dry_run
     OPENAI_API_KEY = openai_api_key
+    OPENAI_MODEL = openai_model
 
     if AUTO_START:
         start_plugin()
