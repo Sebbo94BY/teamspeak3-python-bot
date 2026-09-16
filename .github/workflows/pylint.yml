@@ -34,5 +34,8 @@ jobs:
       - name: install python dependencies
         run: pip install -r requirements.txt
 
+      - name: run unit tests
+        run: python -m unittest discover -v
+
       - name: run pylint
         run: pylint --rcfile=pylintrc $(find . -type f -name "*.py")
