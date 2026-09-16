@@ -129,6 +129,50 @@ class RuntimeBugTests(unittest.TestCase):
             handler.handle_command("   ", sender=7)
         send.assert_not_called()
 
+    def test_command_permission_uses_one_client_info_for_all_handlers(self):
+        connection = Mock()
+        handler = command_handler.CommandHandler(connection)
+        command = Mock(spec=[])
+        handler.add_handler(command, "test")
+        handler.add_handler(command, "test")
+        clientinfo = Mock()
+        clientinfo.is_in_servergroups.return_value = True
+
+        with patch.object(
+            command_handler.client_info, "ClientInfo", return_value=clientinfo
+        ) as info:
+            handler.handle_command("!test", sender=7)
+
+        info.assert_called_once_with(7, connection)
+        self.assertEqual(clientinfo.is_in_servergroups.call_count, 2)
+        self.assertEqual(command.call_count, 2)
+
+    def test_supplied_client_info_avoids_another_lookup(self):
+        handler = command_handler.CommandHandler(Mock())
+        command = Mock(spec=[])
+        handler.add_handler(command, "test")
+        clientinfo = Mock()
+        clientinfo.is_in_servergroups.return_value = True
+
+        with patch.object(command_handler.client_info, "ClientInfo") as info:
+            handler.handle_command("!test", sender=7, clientinfo=clientinfo)
+
+        info.assert_not_called()
+        command.assert_called_once()
+
+    def test_command_with_denied_permission_does_not_call_handler(self):
+        handler = command_handler.CommandHandler(Mock())
+        command = Mock(spec=[])
+        handler.add_handler(command, "test")
+        clientinfo = Mock()
+        clientinfo.is_in_servergroups.return_value = False
+
+        with patch.object(teamspeak_bot, "send_msg_to_client") as send:
+            handler.handle_command("!test", sender=7, clientinfo=clientinfo)
+
+        command.assert_not_called()
+        send.assert_called_once()
+
     def test_plain_text_is_rejected(self):
         handler = command_handler.CommandHandler(Mock())
         with patch.object(teamspeak_bot, "send_msg_to_client") as send:

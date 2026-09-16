@@ -69,7 +69,7 @@ class CommandHandler:
                     return True
         return False
 
-    def handle_command(self, msg, sender=0):
+    def handle_command(self, msg, sender=0, clientinfo=None):
         """
         Handle a new command by informing the corresponding handlers.
         :param msg: Command message.
@@ -122,11 +122,12 @@ class CommandHandler:
                 )
                 return
 
+        if clientinfo is None:
+            clientinfo = client_info.ClientInfo(sender, self.ts3conn)
+
         has_permissions = False
         for handler in handlers:
-            if self.check_permission(
-                handler, client_info.ClientInfo(sender, self.ts3conn)
-            ):
+            if self.check_permission(handler, clientinfo):
                 has_permissions = True
                 handler(sender, msg)
 
@@ -151,4 +152,6 @@ class CommandHandler:
                         str(cl_info.name),
                         str(event.message),
                     )
-                    self.handle_command(event.message, sender=event.invoker_id)
+                    self.handle_command(
+                        event.message, sender=event.invoker_id, clientinfo=cl_info
+                    )
