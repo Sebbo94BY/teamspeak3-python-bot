@@ -15,6 +15,7 @@ from ts3API.utilities import TS3Exception
 # local imports
 from module_loader import setup_plugin, exit_plugin, command, event
 import teamspeak_bot
+from servergroup_cache import get_servergroups
 
 PLUGIN_VERSION = 0.4
 PLUGIN_COMMAND_NAME = "informteamaboutnewbie"
@@ -117,7 +118,7 @@ class InformTeamAboutNewbie(Thread):
         :return: Servergroup
         """
         try:
-            servergroups = self.ts3conn.servergrouplist()
+            servergroups = get_servergroups(self.ts3conn)
         except TS3Exception:
             self.logger.exception(
                 "Could not find any servergroup with the following name: %s", str(name)

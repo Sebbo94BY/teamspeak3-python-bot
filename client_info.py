@@ -2,6 +2,8 @@
 import logging
 import re
 
+from servergroup_cache import get_servergroups
+
 logger = logging.getLogger("bot")
 
 
@@ -24,7 +26,7 @@ class ClientInfo:
         self._database_id = client_data.get("client_database_id", "")
         # servergroups is a list of strings
         sgs = {}
-        for servergroup in ts3conn.servergrouplist():
+        for servergroup in get_servergroups(ts3conn):
             sgs[servergroup.get("sgid")] = servergroup.get("name")
         servergroups_list = client_data.get("client_servergroups", "").split(",")
         self._servergroups = []

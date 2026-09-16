@@ -61,6 +61,7 @@ import event_handler
 import module_loader
 import teamspeak_bot
 import command_handler
+import servergroup_cache
 
 
 class _Registrar:
@@ -81,6 +82,24 @@ from modules.inform_team_about_newbie import main as newbie_notifier
 
 
 class RuntimeBugTests(unittest.TestCase):
+    def test_servergroups_are_cached_until_the_refresh_interval_expires(self):
+        connection = Mock()
+        connection.servergrouplist.return_value = [{"sgid": "6", "name": "Admin"}]
+
+        with patch.object(
+            servergroup_cache, "monotonic", side_effect=[10.0, 10.0, 11.0]
+        ):
+            self.assertEqual(
+                servergroup_cache.get_servergroups(connection),
+                ({"sgid": "6", "name": "Admin"},),
+            )
+            self.assertEqual(
+                servergroup_cache.get_servergroups(connection),
+                ({"sgid": "6", "name": "Admin"},),
+            )
+
+        connection.servergrouplist.assert_called_once_with()
+
     def test_empty_command_is_ignored(self):
         handler = command_handler.CommandHandler(Mock())
         with patch.object(teamspeak_bot, "send_msg_to_client") as send:

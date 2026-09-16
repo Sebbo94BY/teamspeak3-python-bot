@@ -16,6 +16,7 @@ from ts3API.utilities import TS3Exception
 # local imports
 from module_loader import setup_plugin, exit_plugin, command, event
 import teamspeak_bot
+from servergroup_cache import get_servergroups
 
 PLUGIN_VERSION = 0.3
 PLUGIN_COMMAND_NAME = "idlemover"
@@ -154,7 +155,7 @@ class IdleMover(Thread):
             return servergroup_ids_to_ignore
 
         try:
-            servergroup_list = self.ts3conn.servergrouplist()
+            servergroup_list = get_servergroups(self.ts3conn)
         except TS3QueryException:
             self.logger.exception("Failed to get the list of available servergroups.")
             return servergroup_ids_to_ignore
