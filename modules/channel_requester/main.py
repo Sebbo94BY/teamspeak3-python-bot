@@ -528,6 +528,7 @@ class ChannelRequester(Thread):
 
 
 @event(ClientEnteredEvent, ClientMovedEvent, ClientMovedSelfEvent)
+@coalesce_events()
 def client_joined(event_data):
     """
     Client joined the server or a channel or somebody moved the client into a different channel.

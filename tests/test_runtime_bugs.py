@@ -4,6 +4,7 @@
 import logging
 import os
 import sys
+import threading
 import types
 import unittest
 from logging.handlers import TimedRotatingFileHandler
@@ -299,6 +300,72 @@ class RuntimeBugTests(unittest.TestCase):
             handler._inform_observer(observer, event)
         logged.assert_called_once()
         handler._pending_observers.release.assert_called_once_with()
+
+    def test_coalesced_observer_has_only_one_pending_job_per_client(self):
+        event = SimpleNamespace(client_id=7, data={})
+        observer = Mock()
+        observer.event_coalesce_scope = "client"
+        handler = event_handler.EventHandler.__new__(event_handler.EventHandler)
+        handler.observers = {SimpleNamespace: {observer}}
+        handler._pending_observers = Mock()
+        handler._pending_observers.acquire.return_value = True
+        handler._coalesced_observer_keys = set()
+        handler._coalesced_observer_keys_lock = threading.Lock()
+        handler._executor = Mock()
+
+        handler.inform_all(event)
+        handler.inform_all(event)
+
+        handler._executor.submit.assert_called_once()
+        self.assertEqual(handler._coalesced_observer_keys, {(observer, 7)})
+
+    def test_global_coalescing_collapses_events_for_different_clients(self):
+        observer = Mock()
+        observer.event_coalesce_scope = "global"
+        handler = event_handler.EventHandler.__new__(event_handler.EventHandler)
+        handler.observers = {SimpleNamespace: {observer}}
+        handler._pending_observers = Mock()
+        handler._pending_observers.acquire.return_value = True
+        handler._coalesced_observer_keys = set()
+        handler._coalesced_observer_keys_lock = threading.Lock()
+        handler._executor = Mock()
+
+        handler.inform_all(SimpleNamespace(client_id=7, data={}))
+        handler.inform_all(SimpleNamespace(client_id=8, data={}))
+
+        handler._executor.submit.assert_called_once()
+
+    def test_queue_full_releases_the_coalesced_event_key(self):
+        event = SimpleNamespace(client_id=7, data={})
+        observer = Mock()
+        observer.event_coalesce_scope = "client"
+        handler = event_handler.EventHandler.__new__(event_handler.EventHandler)
+        handler.observers = {SimpleNamespace: {observer}}
+        handler._pending_observers = Mock()
+        handler._pending_observers.acquire.return_value = False
+        handler._coalesced_observer_keys = set()
+        handler._coalesced_observer_keys_lock = threading.Lock()
+        handler._executor = Mock()
+
+        handler.inform_all(event)
+
+        self.assertEqual(handler._coalesced_observer_keys, set())
+        handler._executor.submit.assert_not_called()
+
+    def test_uncoalesced_observer_receives_every_event(self):
+        observer = Mock(spec=[])
+        handler = event_handler.EventHandler.__new__(event_handler.EventHandler)
+        handler.observers = {SimpleNamespace: {observer}}
+        handler._pending_observers = Mock()
+        handler._pending_observers.acquire.return_value = True
+        handler._coalesced_observer_keys = set()
+        handler._coalesced_observer_keys_lock = threading.Lock()
+        handler._executor = Mock()
+
+        handler.inform_all(SimpleNamespace(client_id=7, data={}))
+        handler.inform_all(SimpleNamespace(client_id=7, data={}))
+
+        self.assertEqual(handler._executor.submit.call_count, 2)
 
     def test_multimove_moves_client_without_casting_client_dictionary(self):
         connection = Mock()

@@ -689,6 +689,7 @@ class ChannelManager(Thread):
     ClientMovedEvent,
     ClientMovedSelfEvent,
 )
+@coalesce_events()
 def client_entered_left_moved_event(event_data):
     """
     A client entered or left a channel, moved or were moved to a different channel.
@@ -704,6 +705,7 @@ def client_entered_left_moved_event(event_data):
     ClientKickedEvent,
     ClientBannedEvent,
 )
+@coalesce_events(scope="global")
 def client_kicked_banned_event(_event_data):
     """
     A client were kicked / banned from the channel / server.

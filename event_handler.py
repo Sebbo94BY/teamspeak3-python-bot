@@ -44,6 +44,8 @@ class EventHandler:
         self.command_handler = command_handler
         self.observers = {}
         self._pending_observers = threading.BoundedSemaphore(100)
+        self._coalesced_observer_keys = set()
+        self._coalesced_observer_keys_lock = threading.Lock()
         self._executor = ThreadPoolExecutor(
             max_workers=4, thread_name_prefix="ts3-event"
         )
@@ -123,15 +125,45 @@ class EventHandler:
         :param evt: Event to inform observers of.
         """
         for observer in self.get_obs_for_event(evt):
+            coalesced_key = self._get_coalesced_key(observer, evt)
+            if coalesced_key is not None:
+                with self._coalesced_observer_keys_lock:
+                    if coalesced_key in self._coalesced_observer_keys:
+                        continue
+                    self._coalesced_observer_keys.add(coalesced_key)
             if not self._pending_observers.acquire(blocking=False):
+                self._discard_coalesced_key(coalesced_key)
                 EventHandler.logger.warning(
                     "Dropping event of type %s because the observer queue is full.",
                     str(type(evt)),
                 )
                 continue
-            self._executor.submit(self._inform_observer, observer, evt)
+            try:
+                self._executor.submit(
+                    self._inform_observer, observer, evt, coalesced_key
+                )
+            except RuntimeError:
+                self._discard_coalesced_key(coalesced_key)
+                self._pending_observers.release()
 
-    def _inform_observer(self, observer, evt):
+    @staticmethod
+    def _get_coalesced_key(observer, evt):
+        """Return a queue-deduplication key requested by an observer, if any."""
+        scope = getattr(observer, "event_coalesce_scope", None)
+        if scope == "global":
+            return observer
+        if scope == "client":
+            client_id = getattr(evt, "client_id", None)
+            if client_id is not None:
+                return observer, client_id
+        return None
+
+    def _discard_coalesced_key(self, coalesced_key):
+        if coalesced_key is not None:
+            with self._coalesced_observer_keys_lock:
+                self._coalesced_observer_keys.discard(coalesced_key)
+
+    def _inform_observer(self, observer, evt, coalesced_key=None):
         """Run an observer while retaining its exceptions in the bot log."""
         try:
             observer(evt)
@@ -143,6 +175,7 @@ class EventHandler:
                 str(evt.data),
             )
         finally:
+            self._discard_coalesced_key(coalesced_key)
             self._pending_observers.release()
 
     def close(self):
