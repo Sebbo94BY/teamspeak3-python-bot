@@ -747,8 +747,10 @@ def stop_plugin(_sender=None, _msg=None):
     Stop the ChannelManager by setting the PLUGIN_STOPPER signal and undefining the mover.
     """
     global PLUGIN_INFO
-    PLUGIN_STOPPER.set()
-    PLUGIN_INFO = None
+    if PLUGIN_INFO is not None:
+        PLUGIN_STOPPER.set()
+        PLUGIN_INFO.join()
+        PLUGIN_INFO = None
 
 
 @command(f"{PLUGIN_COMMAND_NAME} restart")

@@ -191,8 +191,10 @@ def stop_plugin(_sender=None, _msg=None):
     Stop the plugin by setting the respective signal and undefining it.
     """
     global PLUGIN_INFO
-    PLUGIN_STOPPER.set()
-    PLUGIN_INFO = None
+    if PLUGIN_INFO is not None:
+        PLUGIN_STOPPER.set()
+        PLUGIN_INFO.join()
+        PLUGIN_INFO = None
 
     PluginTemplate.logger.info("Stopped plugin!")
 
