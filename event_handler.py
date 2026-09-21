@@ -46,6 +46,8 @@ class EventHandler:
         self._pending_observers = threading.BoundedSemaphore(100)
         self._coalesced_observer_keys = set()
         self._coalesced_observer_keys_lock = threading.Lock()
+        self._serverquery_client_ids = set()
+        self._serverquery_client_ids_lock = threading.Lock()
         self._executor = ThreadPoolExecutor(
             max_workers=4, thread_name_prefix="ts3-event"
         )
@@ -57,6 +59,8 @@ class EventHandler:
         """
         # parsed_event = Events.EventParser.parse_event(event=event)
         parsed_event = kw["event"]
+        if self._is_serverquery_event(parsed_event):
+            return
         if isinstance(parsed_event, TextMessageEvent):
             logging.debug(type(parsed_event))
         elif isinstance(parsed_event, ChannelEditedEvent):
@@ -77,6 +81,42 @@ class EventHandler:
 
         # Inform all observers
         self.inform_all(parsed_event)
+
+    @staticmethod
+    def _get_event_client_id(evt):
+        """Return an event's client ID, if the TeamSpeak event provides one."""
+        client_id = getattr(evt, "client_id", None)
+        if client_id is not None:
+            return str(client_id)
+        return str(getattr(evt, "data", {}).get("clid", "")) or None
+
+    def _is_serverquery_event(self, evt):
+        """Track and suppress all events belonging to ServerQuery clients.
+
+        ServerQuery connections have ``client_type=1`` on their entered event.
+        Their later move/leave events omit that field, so remember their IDs for
+        the lifetime of the connection instead of issuing another query.
+        """
+        client_id = self._get_event_client_id(evt)
+        if isinstance(evt, ClientEnteredEvent):
+            is_serverquery = str(getattr(evt, "client_type", "")) == "1"
+            if client_id is not None:
+                with self._serverquery_client_ids_lock:
+                    if is_serverquery:
+                        self._serverquery_client_ids.add(client_id)
+                    else:
+                        # TeamSpeak can reuse a client ID after the old client left.
+                        self._serverquery_client_ids.discard(client_id)
+            return is_serverquery
+
+        if client_id is None:
+            return False
+
+        with self._serverquery_client_ids_lock:
+            is_serverquery = client_id in self._serverquery_client_ids
+            if isinstance(evt, ClientLeftEvent):
+                self._serverquery_client_ids.discard(client_id)
+        return is_serverquery
 
     def get_obs_for_event(self, evt):
         """

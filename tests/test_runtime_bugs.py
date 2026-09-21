@@ -1,6 +1,6 @@
 """Regression tests for runtime failures in bot and plugin control paths."""
 
-# pylint: disable=attribute-defined-outside-init,missing-class-docstring,missing-function-docstring,redefined-outer-name,too-many-public-methods,wrong-import-position
+# pylint: disable=attribute-defined-outside-init,missing-class-docstring,missing-function-docstring,redefined-outer-name,too-few-public-methods,too-many-public-methods,wrong-import-position
 import logging
 import os
 import sys
@@ -24,6 +24,15 @@ class TS3QueryException(TS3Exception):
 
 
 events = types.ModuleType("ts3API.Events")
+
+
+class _Event:
+    """Small event stand-in matching the SDK constructor contract."""
+
+    def __init__(self, data):
+        self.data = data
+
+
 for name in (
     "TextMessageEvent",
     "ChannelEditedEvent",
@@ -36,7 +45,7 @@ for name in (
     "ClientKickedEvent",
     "ClientBannedEvent",
 ):
-    setattr(events, name, type(name, (), {}))
+    setattr(events, name, type(name, (_Event,), {}))
 connection = types.ModuleType("ts3API.TS3Connection")
 connection.TS3QueryException = TS3QueryException
 connection.TS3Connection = Mock
@@ -300,6 +309,58 @@ class RuntimeBugTests(unittest.TestCase):
             handler._inform_observer(observer, event)
         logged.assert_called_once()
         handler._pending_observers.release.assert_called_once_with()
+
+    def test_serverquery_events_are_not_dispatched(self):
+        handler = event_handler.EventHandler.__new__(event_handler.EventHandler)
+        handler._serverquery_client_ids = set()
+        handler._serverquery_client_ids_lock = threading.Lock()
+        handler.inform_all = Mock()
+        event = event_handler.ClientEnteredEvent({"clid": "17", "client_type": "1"})
+        event.client_id = 17
+        event.client_type = "1"
+
+        handler.on_event(None, event=event)
+
+        handler.inform_all.assert_not_called()
+        self.assertEqual(handler._serverquery_client_ids, {"17"})
+
+    def test_later_events_for_serverquery_clients_are_not_dispatched(self):
+        handler = event_handler.EventHandler.__new__(event_handler.EventHandler)
+        handler._serverquery_client_ids = {"17"}
+        handler._serverquery_client_ids_lock = threading.Lock()
+        handler.inform_all = Mock()
+        event = event_handler.ClientMovedEvent({"clid": "17"})
+        event.client_id = 17
+
+        handler.on_event(None, event=event)
+
+        handler.inform_all.assert_not_called()
+
+    def test_serverquery_client_ids_are_released_on_leave(self):
+        handler = event_handler.EventHandler.__new__(event_handler.EventHandler)
+        handler._serverquery_client_ids = {"17"}
+        handler._serverquery_client_ids_lock = threading.Lock()
+        handler.inform_all = Mock()
+        event = event_handler.ClientLeftEvent({"clid": "17"})
+        event.client_id = 17
+
+        handler.on_event(None, event=event)
+
+        handler.inform_all.assert_not_called()
+        self.assertEqual(handler._serverquery_client_ids, set())
+
+    def test_normal_client_events_are_still_dispatched(self):
+        handler = event_handler.EventHandler.__new__(event_handler.EventHandler)
+        handler._serverquery_client_ids = {"17"}
+        handler._serverquery_client_ids_lock = threading.Lock()
+        handler.inform_all = Mock()
+        event = event_handler.ClientEnteredEvent({"clid": "42", "client_type": "0"})
+        event.client_id = 42
+        event.client_type = "0"
+
+        handler.on_event(None, event=event)
+
+        handler.inform_all.assert_called_once_with(event)
 
     def test_coalesced_observer_has_only_one_pending_job_per_client(self):
         event = SimpleNamespace(client_id=7, data={})
