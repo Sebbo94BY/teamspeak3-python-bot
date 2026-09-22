@@ -172,7 +172,13 @@ class Ts3Bot:
 
         self.command_handler = command_handler.CommandHandler(self.ts3conn)
         self.event_handler = event_handler.EventHandler(
-            ts3conn=self.ts3conn, command_handler=self.command_handler
+            ts3conn=self.ts3conn,
+            command_handler=self.command_handler,
+            event_workers=self.event_workers,
+            command_workers=self.command_workers,
+            event_queue_size=self.event_queue_size,
+            command_queue_size=self.command_queue_size,
+            memory_limit_mb=self.memory_limit_mb,
         )
         try:
             self.ts3conn.register_for_server_events(self.event_handler.on_event)
@@ -182,13 +188,21 @@ class Ts3Bot:
             self.logger.exception("Error on registering for events.")
             sys.exit(1)
 
-    def __del__(self):
+    def close(self):
+        """Stop receiving events, finish scheduled work, and close the connection."""
+        ts3conn = getattr(self, "ts3conn", None)
+        if ts3conn is not None:
+            stop_conn(ts3conn)
         event_handler_instance = getattr(self, "event_handler", None)
         if event_handler_instance is not None:
             event_handler_instance.close()
-        ts3conn = getattr(self, "ts3conn", None)
+            self.event_handler = None
         if ts3conn is not None:
             ts3conn.quit()
+            self.ts3conn = None
+
+    def __del__(self):
+        self.close()
 
     def __init__(
         self,
@@ -208,6 +222,11 @@ class Ts3Bot:
         sshloadsystemhostkeys="False",
         sshtimeout=None,
         sshtimeoutlimit=3,
+        eventworkers=2,
+        commandworkers=1,
+        eventqueuesize=50,
+        commandqueuesize=10,
+        memorylimitmb=128,
         **__,
     ):
         """
@@ -240,6 +259,13 @@ class Ts3Bot:
         self.use_system_hosts = bool(strtobool(sshloadsystemhostkeys))
         self.sshtimeout = sshtimeout
         self.sshtimeoutlimit = sshtimeoutlimit
+        self.event_workers = self._positive_int(eventworkers, "EventWorkers")
+        self.command_workers = self._positive_int(commandworkers, "CommandWorkers")
+        self.event_queue_size = self._positive_int(eventqueuesize, "EventQueueSize")
+        self.command_queue_size = self._positive_int(
+            commandqueuesize, "CommandQueueSize"
+        )
+        self.memory_limit_mb = self._nonnegative_int(memorylimitmb, "MemoryLimitMB")
 
         if self.host_key_file:
             os.makedirs(
@@ -253,3 +279,17 @@ class Ts3Bot:
         # Load modules
         module_loader.load_modules(self, plugins)
         self.ts3conn.start_keepalive_loop()
+
+    @staticmethod
+    def _positive_int(value, option):
+        value = int(value)
+        if value < 1:
+            raise ValueError(f"{option} must be at least 1.")
+        return value
+
+    @staticmethod
+    def _nonnegative_int(value, option):
+        value = int(value)
+        if value < 0:
+            raise ValueError(f"{option} must not be negative.")
+        return value
