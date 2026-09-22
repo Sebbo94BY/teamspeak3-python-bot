@@ -1,6 +1,8 @@
 # standard imports
 import logging
 
+import threading
+
 # third-party imports
 from ts3API.TS3Connection import TS3QueryException
 from ts3API.utilities import TS3Exception
@@ -16,6 +18,19 @@ logger = logging.getLogger("bot")
 
 # defaults for configureable options
 DRY_RUN = False  # log instead of performing actual actions
+
+
+def _shutdown_bot(restart=False):
+    """Close the bot outside a command worker, which cannot join itself."""
+
+    def shutdown():
+        BOT.close()
+        if restart:
+            main.restart_program()
+
+    shutdown_thread = threading.Thread(target=shutdown, name="ts3-shutdown")
+    shutdown_thread.start()
+    return shutdown_thread
 
 
 @setup_plugin
@@ -65,7 +80,7 @@ def stop_bot(sender, _msg):
         return
 
     exit_all()
-    BOT.ts3conn.quit()
+    _shutdown_bot()
     logger.info("Bot has been stopped by clid=%s!", int(sender))
 
 
@@ -84,9 +99,8 @@ def restart_bot(sender, _msg):
         return
 
     exit_all()
-    BOT.ts3conn.quit()
+    _shutdown_bot(restart=True)
     logger.info("Bot has been restarted by clid=%s!", int(sender))
-    main.restart_program()
 
 
 @command("help", "commands", "commandlist")

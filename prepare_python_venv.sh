@@ -1,9 +1,17 @@
 #!/usr/bin/env bash
 
-echo "Setting up Python virtual env. This takes a moment, please wait..."
-
 VENV_DIR="${1}"
+REQUIREMENTS_HASH_FILE="${VENV_DIR}/.requirements.sha256"
+REQUIREMENTS_HASH="$(sha256sum requirements.txt | awk '{print $1}')"
 
+if [[ -x "${VENV_DIR}/bin/python" ]] \
+    && [[ -f "${REQUIREMENTS_HASH_FILE}" ]] \
+    && [[ "$(<"${REQUIREMENTS_HASH_FILE}")" == "${REQUIREMENTS_HASH}" ]]; then
+    echo "Python virtual env is already up to date."
+    exit 0
+fi
+
+echo "Setting up Python virtual env. This takes a moment, please wait..."
 if [[ -d "${VENV_DIR}" ]]; then
     rm -rf "${VENV_DIR}"
 fi
@@ -26,6 +34,8 @@ if [[ $? -ne 0 ]]; then
     echo "Failed to install the Python requirements in the virtual env."
     exit 1
 fi
+
+printf '%s\n' "${REQUIREMENTS_HASH}" > "${REQUIREMENTS_HASH_FILE}"
 
 echo "Python virtual env has been successfully set up."
 

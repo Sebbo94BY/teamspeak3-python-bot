@@ -1,7 +1,10 @@
 [Unit]
 Description=TeamSpeak Bot
 Documentation=https://github.com/Sebi94nbg/teamspeak3-python-bot
-After=network.target
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=5min
+StartLimitBurst=5
 
 [Service]
 User=tsbot
@@ -10,8 +13,18 @@ WorkingDirectory=/usr/local/bin/teamspeak3-python-bot
 ExecStartPre=/bin/bash prepare_python_venv.sh venv
 ExecStart=/usr/local/bin/teamspeak3-python-bot/venv/bin/python main.py
 Type=simple
-Restart=always
-RestartSec=30
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=30s
+TasksMax=64
+# Keep this in sync with General: MemoryLimitMB in config.ini.
+MemoryHigh=96M
+MemoryMax=128M
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/usr/local/bin/teamspeak3-python-bot/logs /usr/local/bin/teamspeak3-python-bot/venv /usr/local/bin/teamspeak3-python-bot/.ssh
 
 [Install]
 WantedBy=multi-user.target
