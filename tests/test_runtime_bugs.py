@@ -10,7 +10,7 @@ import unittest
 from logging.handlers import TimedRotatingFileHandler
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call, mock_open, patch
 
 os.makedirs("logs", exist_ok=True)
 
@@ -307,11 +307,10 @@ class RuntimeBugTests(unittest.TestCase):
         event = SimpleNamespace(data={"event": "test"})
         observer = Mock(side_effect=ValueError("broken observer"))
         handler = event_handler.EventHandler.__new__(event_handler.EventHandler)
-        handler._pending_observers = Mock()
+        handler._release_queue_slot = Mock()
         with patch.object(event_handler.EventHandler.logger, "exception") as logged:
-            handler._inform_observer(observer, event)
+            handler._inform_observer(observer, event, is_command=False)
         logged.assert_called_once()
-        handler._pending_observers.release.assert_called_once_with()
 
     def test_serverquery_events_are_not_dispatched(self):
         handler = event_handler.EventHandler.__new__(event_handler.EventHandler)
@@ -365,71 +364,244 @@ class RuntimeBugTests(unittest.TestCase):
 
         handler.inform_all.assert_called_once_with(event)
 
-    def test_coalesced_observer_has_only_one_pending_job_per_client(self):
-        event = SimpleNamespace(client_id=7, data={})
-        observer = Mock()
-        observer.event_coalesce_scope = "client"
+    def test_coalesce_compatibility_observer_receives_every_event(self):
+        received_sequences = []
+        all_events_received = threading.Event()
+
+        @module_loader.coalesce_events()
+        def observer(event):
+            received_sequences.append(event.data["sequence"])
+            if len(received_sequences) == 2:
+                all_events_received.set()
+
+        connection = Mock()
+        commands = command_handler.CommandHandler(connection)
+        handler = event_handler.EventHandler(connection, commands)
+        handler.add_observer(observer, event_handler.ClientMovedEvent)
+        try:
+            for sequence in range(2):
+                handler.inform_all(
+                    event_handler.ClientMovedEvent({"sequence": sequence})
+                )
+            self.assertTrue(all_events_received.wait(timeout=1))
+        finally:
+            handler.close()
+
+        self.assertCountEqual(received_sequences, range(2))
+
+    def test_backlogged_events_are_all_delivered_by_the_real_executor(self):
+        release_observer = threading.Event()
+        first_observer_started = threading.Event()
+        received_sequences = []
+
+        def observer(event):
+            first_observer_started.set()
+            release_observer.wait(timeout=5)
+            received_sequences.append(event.data["sequence"])
+
+        connection = Mock()
+        commands = command_handler.CommandHandler(connection)
+        handler = event_handler.EventHandler(connection, commands, event_queue_size=700)
+        handler.add_observer(observer, event_handler.ClientMovedEvent)
+        try:
+            handler.inform_all(event_handler.ClientMovedEvent({"sequence": 0}))
+            self.assertTrue(first_observer_started.wait(timeout=1))
+
+            for sequence in range(1, 700):
+                handler.inform_all(
+                    event_handler.ClientMovedEvent({"sequence": sequence})
+                )
+        finally:
+            release_observer.set()
+            handler.close()
+
+        self.assertCountEqual(received_sequences, range(700))
+
+    def test_full_event_queue_blocks_then_delivers_the_waiting_event(self):
+        release_observer = threading.Event()
+        first_observer_started = threading.Event()
+        second_submit_finished = threading.Event()
+        received_sequences = []
+
+        def observer(event):
+            first_observer_started.set()
+            release_observer.wait(timeout=5)
+            received_sequences.append(event.data["sequence"])
+
+        connection = Mock()
+        commands = command_handler.CommandHandler(connection)
+        handler = event_handler.EventHandler(connection, commands, event_queue_size=1)
+        handler.add_observer(observer, event_handler.ClientMovedEvent)
+        try:
+            handler.inform_all(event_handler.ClientMovedEvent({"sequence": 1}))
+            self.assertTrue(first_observer_started.wait(timeout=1))
+            submitter = threading.Thread(
+                target=lambda: (
+                    handler.inform_all(event_handler.ClientMovedEvent({"sequence": 2})),
+                    second_submit_finished.set(),
+                )
+            )
+            submitter.start()
+            self.assertFalse(second_submit_finished.wait(timeout=0.1))
+
+            release_observer.set()
+            submitter.join(timeout=1)
+            self.assertFalse(submitter.is_alive())
+        finally:
+            release_observer.set()
+            handler.close()
+
+        self.assertTrue(second_submit_finished.is_set())
+        self.assertCountEqual(received_sequences, [1, 2])
+
+    def test_shutdown_unblocks_a_submitter_waiting_for_queue_capacity(self):
+        release_observer = threading.Event()
+        observer_started = threading.Event()
+        submitter_finished = threading.Event()
+
+        def observer(_event):
+            observer_started.set()
+            release_observer.wait(timeout=5)
+
+        connection = Mock()
+        commands = command_handler.CommandHandler(connection)
+        handler = event_handler.EventHandler(connection, commands, event_queue_size=1)
+        handler.add_observer(observer, event_handler.ClientMovedEvent)
+        handler.inform_all(event_handler.ClientMovedEvent({}))
+        self.assertTrue(observer_started.wait(timeout=1))
+        submitter = threading.Thread(
+            target=lambda: (
+                handler.inform_all(event_handler.ClientMovedEvent({})),
+                submitter_finished.set(),
+            )
+        )
+        submitter.start()
+        self.assertFalse(submitter_finished.wait(timeout=0.1))
+        closer = threading.Thread(target=handler.close)
+        closer.start()
+        self.assertTrue(submitter_finished.wait(timeout=1))
+        release_observer.set()
+        closer.join(timeout=1)
+        self.assertFalse(closer.is_alive())
+
+    def test_text_messages_use_the_dedicated_command_executor(self):
+        observer_completed = threading.Event()
+        observer_threads = []
+
+        def observer(_event):
+            observer_threads.append(threading.current_thread().name)
+            observer_completed.set()
+
+        connection = Mock()
+        commands = command_handler.CommandHandler(connection)
+        handler = event_handler.EventHandler(connection, commands)
+        handler.add_observer(observer, event_handler.TextMessageEvent)
+        event = event_handler.TextMessageEvent({})
+        event.targetmode = "Channel"
+        try:
+            handler.inform_all(event)
+            self.assertTrue(observer_completed.wait(timeout=1))
+        finally:
+            handler.close()
+
+        self.assertEqual(len(observer_threads), 1)
+        self.assertTrue(observer_threads[0].startswith("ts3-command"))
+
+    def test_observer_lookup_is_cached_and_invalidated_when_observers_change(self):
+        connection = Mock()
+        commands = command_handler.CommandHandler(connection)
+        handler = event_handler.EventHandler(connection, commands)
+        first_observer = Mock()
+        second_observer = Mock()
+        event = event_handler.ClientMovedEvent({})
+        handler.add_observer(first_observer, event_handler.ClientMovedEvent)
+        try:
+            first_lookup = handler.get_obs_for_event(event)
+            self.assertIs(first_lookup, handler.get_obs_for_event(event))
+
+            handler.add_observer(second_observer, event_handler.ClientMovedEvent)
+            second_lookup = handler.get_obs_for_event(event)
+        finally:
+            handler.close()
+
+        self.assertIsNot(first_lookup, second_lookup)
+        self.assertEqual(second_lookup, frozenset({first_observer, second_observer}))
+
+    def test_close_shuts_down_event_and_command_executors(self):
+        connection = Mock()
+        commands = command_handler.CommandHandler(connection)
+        handler = event_handler.EventHandler(connection, commands)
+        observer_called = threading.Event()
+        handler.add_observer(
+            lambda _event: observer_called.set(), event_handler.ClientMovedEvent
+        )
+
+        handler.close()
+
+        handler.on_event(None, event=event_handler.ClientMovedEvent({}))
+
+        with self.assertRaises(RuntimeError):
+            handler._executor.submit(lambda: None)
+        with self.assertRaises(RuntimeError):
+            handler._command_executor.submit(lambda: None)
+        self.assertFalse(observer_called.is_set())
+
+    def test_memory_warning_is_rate_limited_and_uses_the_configured_limit(self):
         handler = event_handler.EventHandler.__new__(event_handler.EventHandler)
-        handler.observers = {SimpleNamespace: {observer}}
-        handler._pending_observers = Mock()
-        handler._pending_observers.acquire.return_value = True
-        handler._coalesced_observer_keys = set()
-        handler._coalesced_observer_keys_lock = threading.Lock()
-        handler._executor = Mock()
+        handler._memory_limit_mb = 100
+        handler._last_memory_check = 0.0
 
-        handler.inform_all(event)
-        handler.inform_all(event)
+        with (
+            patch.object(event_handler.time, "monotonic", return_value=61.0),
+            patch.object(
+                event_handler.EventHandler, "_get_memory_usage_mb", return_value=80
+            ),
+            patch.object(event_handler.EventHandler.logger, "warning") as warning,
+        ):
+            handler._warn_if_memory_limit_is_near()
+            handler._warn_if_memory_limit_is_near()
 
-        handler._executor.submit.assert_called_once()
-        self.assertEqual(handler._coalesced_observer_keys, {(observer, 7)})
+        warning.assert_called_once()
+        self.assertEqual(warning.call_args.args[2], 100)
 
-    def test_global_coalescing_collapses_events_for_different_clients(self):
-        observer = Mock()
-        observer.event_coalesce_scope = "global"
-        handler = event_handler.EventHandler.__new__(event_handler.EventHandler)
-        handler.observers = {SimpleNamespace: {observer}}
-        handler._pending_observers = Mock()
-        handler._pending_observers.acquire.return_value = True
-        handler._coalesced_observer_keys = set()
-        handler._coalesced_observer_keys_lock = threading.Lock()
-        handler._executor = Mock()
+    def test_memory_usage_reads_current_rss_from_proc(self):
+        with (
+            patch(
+                "builtins.open", mock_open(read_data="Name:\tbot\nVmRSS:\t81920 kB\n")
+            ),
+            patch.object(event_handler.resource, "getrusage") as peak_usage,
+        ):
+            self.assertEqual(event_handler.EventHandler._get_memory_usage_mb(), 80)
 
-        handler.inform_all(SimpleNamespace(client_id=7, data={}))
-        handler.inform_all(SimpleNamespace(client_id=8, data={}))
+        peak_usage.assert_not_called()
 
-        handler._executor.submit.assert_called_once()
+    def test_memory_usage_falls_back_to_peak_rss_without_proc(self):
+        with (
+            patch("builtins.open", side_effect=OSError),
+            patch.object(
+                event_handler.resource,
+                "getrusage",
+                return_value=SimpleNamespace(ru_maxrss=80 * 1024),
+            ),
+        ):
+            self.assertEqual(event_handler.EventHandler._get_memory_usage_mb(), 80)
 
-    def test_queue_full_releases_the_coalesced_event_key(self):
-        event = SimpleNamespace(client_id=7, data={})
-        observer = Mock()
-        observer.event_coalesce_scope = "client"
-        handler = event_handler.EventHandler.__new__(event_handler.EventHandler)
-        handler.observers = {SimpleNamespace: {observer}}
-        handler._pending_observers = Mock()
-        handler._pending_observers.acquire.return_value = False
-        handler._coalesced_observer_keys = set()
-        handler._coalesced_observer_keys_lock = threading.Lock()
-        handler._executor = Mock()
+    def test_bot_close_stops_receiving_before_draining_and_quitting(self):
+        shutdown_order = []
+        connection = Mock()
+        connection.stop_recv.set.side_effect = lambda: shutdown_order.append("stop")
+        connection.quit.side_effect = lambda: shutdown_order.append("quit")
+        handler = Mock()
+        handler.close.side_effect = lambda: shutdown_order.append("drain")
+        bot = teamspeak_bot.Ts3Bot.__new__(teamspeak_bot.Ts3Bot)
+        bot.ts3conn = connection
+        bot.event_handler = handler
 
-        handler.inform_all(event)
+        bot.close()
 
-        self.assertEqual(handler._coalesced_observer_keys, set())
-        handler._executor.submit.assert_not_called()
-
-    def test_uncoalesced_observer_receives_every_event(self):
-        observer = Mock(spec=[])
-        handler = event_handler.EventHandler.__new__(event_handler.EventHandler)
-        handler.observers = {SimpleNamespace: {observer}}
-        handler._pending_observers = Mock()
-        handler._pending_observers.acquire.return_value = True
-        handler._coalesced_observer_keys = set()
-        handler._coalesced_observer_keys_lock = threading.Lock()
-        handler._executor = Mock()
-
-        handler.inform_all(SimpleNamespace(client_id=7, data={}))
-        handler.inform_all(SimpleNamespace(client_id=7, data={}))
-
-        self.assertEqual(handler._executor.submit.call_count, 2)
+        self.assertEqual(shutdown_order, ["stop", "drain", "quit"])
+        self.assertIsNone(bot.ts3conn)
+        self.assertIsNone(bot.event_handler)
 
     def test_multimove_moves_client_without_casting_client_dictionary(self):
         connection = Mock()

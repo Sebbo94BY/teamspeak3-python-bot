@@ -65,7 +65,7 @@ def stop_bot(sender, _msg):
         return
 
     exit_all()
-    BOT.ts3conn.quit()
+    BOT.close()
     logger.info("Bot has been stopped by clid=%s!", int(sender))
 
 
@@ -84,7 +84,7 @@ def restart_bot(sender, _msg):
         return
 
     exit_all()
-    BOT.ts3conn.quit()
+    BOT.close()
     logger.info("Bot has been restarted by clid=%s!", int(sender))
     main.restart_program()
 

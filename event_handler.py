@@ -2,6 +2,8 @@
 import logging
 
 import threading
+import time
+import resource
 
 # pylint: disable=consider-using-with
 from concurrent.futures import ThreadPoolExecutor
@@ -39,17 +41,43 @@ class EventHandler:
     logger.info("Configured %s logger", str(class_name))
     logger.propagate = 0
 
-    def __init__(self, ts3conn, command_handler):
+    def __init__(
+        self,
+        ts3conn,
+        command_handler,
+        event_workers=2,
+        command_workers=1,
+        event_queue_size=50,
+        command_queue_size=10,
+        memory_limit_mb=128,
+    ):
         self.ts3conn = ts3conn
         self.command_handler = command_handler
         self.observers = {}
-        self._pending_observers = threading.BoundedSemaphore(100)
-        self._coalesced_observer_keys = set()
-        self._coalesced_observer_keys_lock = threading.Lock()
+        self._observers_by_event_type = {}
+        self._observers_lock = threading.RLock()
+        self._accepting_events = True
+        self._queue_condition = threading.Condition()
+        self._event_queue_size = int(event_queue_size)
+        self._command_queue_size = int(command_queue_size)
+        if self._event_queue_size < 1 or self._command_queue_size < 1:
+            raise ValueError("Event and command queue sizes must be at least 1.")
+        self._pending_event_jobs = 0
+        self._pending_command_jobs = 0
+        self._event_queue_warning_logged = False
+        self._command_queue_warning_logged = False
         self._serverquery_client_ids = set()
         self._serverquery_client_ids_lock = threading.Lock()
+        self._memory_limit_mb = int(memory_limit_mb)
+        self._last_memory_check = 0.0
+        # The executor queue is deliberately unbounded: TeamSpeak events are
+        # state changes, so silently dropping them makes plugin state incorrect.
         self._executor = ThreadPoolExecutor(
-            max_workers=4, thread_name_prefix="ts3-event"
+            max_workers=int(event_workers), thread_name_prefix="ts3-event"
+        )
+        # Commands must not wait behind a burst of client events.
+        self._command_executor = ThreadPoolExecutor(
+            max_workers=int(command_workers), thread_name_prefix="ts3-command"
         )
         self.add_observer(self.command_handler.inform, TextMessageEvent)
 
@@ -125,10 +153,20 @@ class EventHandler:
         :return: List of observers.
         :rtype: list[function]
         """
-        obs = set()
-        for event_type in type(evt).mro():
-            obs.update(self.observers.get(event_type, set()))
-        return obs
+        event_class = type(evt)
+        with self._observers_lock:
+            cached_observers = self._observers_by_event_type.get(event_class)
+            if cached_observers is not None:
+                return cached_observers
+
+            obs = set()
+            for event_type in event_class.mro():
+                obs.update(self.observers.get(event_type, set()))
+            # Plugin observers are normally registered during startup. Caching the
+            # complete MRO lookup avoids allocating a set for every incoming event.
+            cached_observers = frozenset(obs)
+            self._observers_by_event_type[event_class] = cached_observers
+            return cached_observers
 
     def add_observer(self, obs, evt_type):
         """
@@ -137,9 +175,11 @@ class EventHandler:
         :param evt_type: Event type to observe.
         :type evt_type: TS3Event
         """
-        obs_set = self.observers.get(evt_type, set())
-        obs_set.add(obs)
-        self.observers[evt_type] = obs_set
+        with self._observers_lock:
+            obs_set = self.observers.get(evt_type, set())
+            obs_set.add(obs)
+            self.observers[evt_type] = obs_set
+            self._observers_by_event_type.clear()
 
     def remove_observer(self, obs, evt_type):
         """
@@ -147,7 +187,9 @@ class EventHandler:
         :param obs: Observer to remove.
         :param evt_type: Event type to remove the observer from.
         """
-        self.observers.get(evt_type, set()).discard(obs)
+        with self._observers_lock:
+            self.observers.get(evt_type, set()).discard(obs)
+            self._observers_by_event_type.clear()
 
     def remove_observer_from_all(self, obs):
         """
@@ -164,46 +206,100 @@ class EventHandler:
         Inform all observers registered to the event type of an event.
         :param evt: Event to inform observers of.
         """
+        is_command = isinstance(evt, TextMessageEvent)
+        executor = self._command_executor if is_command else self._executor
         for observer in self.get_obs_for_event(evt):
-            coalesced_key = self._get_coalesced_key(observer, evt)
-            if coalesced_key is not None:
-                with self._coalesced_observer_keys_lock:
-                    if coalesced_key in self._coalesced_observer_keys:
-                        continue
-                    self._coalesced_observer_keys.add(coalesced_key)
-            if not self._pending_observers.acquire(blocking=False):
-                self._discard_coalesced_key(coalesced_key)
-                EventHandler.logger.warning(
-                    "Dropping event of type %s because the observer queue is full.",
-                    str(type(evt)),
-                )
-                continue
+            if not self._acquire_queue_slot(is_command):
+                return
             try:
-                self._executor.submit(
-                    self._inform_observer, observer, evt, coalesced_key
-                )
+                executor.submit(self._inform_observer, observer, evt, is_command)
             except RuntimeError:
-                self._discard_coalesced_key(coalesced_key)
-                self._pending_observers.release()
+                self._release_queue_slot(is_command)
+                EventHandler.logger.warning(
+                    "Could not schedule event of type %s because the bot is stopping.",
+                    type(evt),
+                )
+        self._warn_if_memory_limit_is_near()
+
+    def _acquire_queue_slot(self, is_command):
+        """Reserve a bounded queue slot, blocking without dropping work."""
+        queue_name = "command" if is_command else "event"
+        queue_size = self._command_queue_size if is_command else self._event_queue_size
+        with self._queue_condition:
+            pending_name = (
+                "_pending_command_jobs" if is_command else "_pending_event_jobs"
+            )
+            warning_name = (
+                "_command_queue_warning_logged"
+                if is_command
+                else "_event_queue_warning_logged"
+            )
+            while self._accepting_events and getattr(self, pending_name) >= queue_size:
+                if not getattr(self, warning_name):
+                    EventHandler.logger.warning(
+                        "%s queue is full (%d jobs); processing is backpressured. "
+                        "Consider increasing %sQueueSize or %sWorkers.",
+                        queue_name.capitalize(),
+                        queue_size,
+                        queue_name.capitalize(),
+                        queue_name.capitalize(),
+                    )
+                    setattr(self, warning_name, True)
+                self._queue_condition.wait()
+            if not self._accepting_events:
+                return False
+            setattr(self, pending_name, getattr(self, pending_name) + 1)
+            return True
+
+    def _release_queue_slot(self, is_command):
+        with self._queue_condition:
+            pending_name = (
+                "_pending_command_jobs" if is_command else "_pending_event_jobs"
+            )
+            warning_name = (
+                "_command_queue_warning_logged"
+                if is_command
+                else "_event_queue_warning_logged"
+            )
+            pending = getattr(self, pending_name) - 1
+            setattr(self, pending_name, pending)
+            queue_size = (
+                self._command_queue_size if is_command else self._event_queue_size
+            )
+            if pending <= queue_size // 2:
+                setattr(self, warning_name, False)
+            self._queue_condition.notify_all()
+
+    def _warn_if_memory_limit_is_near(self):
+        """Warn at most once a minute when current RSS nears the limit."""
+        if (
+            self._memory_limit_mb <= 0
+            or time.monotonic() - self._last_memory_check < 60
+        ):
+            return
+        self._last_memory_check = time.monotonic()
+        memory_mb = self._get_memory_usage_mb()
+        if memory_mb >= self._memory_limit_mb * 0.8:
+            EventHandler.logger.warning(
+                "Current resident memory is %.1f MiB of configured %d MiB; "
+                "consider increasing the bot memory limit or reducing load.",
+                memory_mb,
+                self._memory_limit_mb,
+            )
 
     @staticmethod
-    def _get_coalesced_key(observer, evt):
-        """Return a queue-deduplication key requested by an observer, if any."""
-        scope = getattr(observer, "event_coalesce_scope", None)
-        if scope == "global":
-            return observer
-        if scope == "client":
-            client_id = getattr(evt, "client_id", None)
-            if client_id is not None:
-                return observer, client_id
-        return None
+    def _get_memory_usage_mb():
+        """Return current Linux RSS, falling back to the portable peak metric."""
+        try:
+            with open("/proc/self/status", encoding="utf-8") as status_file:
+                for line in status_file:
+                    if line.startswith("VmRSS:"):
+                        return int(line.split()[1]) / 1024
+        except (OSError, IndexError, ValueError):
+            pass
+        return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
 
-    def _discard_coalesced_key(self, coalesced_key):
-        if coalesced_key is not None:
-            with self._coalesced_observer_keys_lock:
-                self._coalesced_observer_keys.discard(coalesced_key)
-
-    def _inform_observer(self, observer, evt, coalesced_key=None):
+    def _inform_observer(self, observer, evt, is_command):
         """Run an observer while retaining its exceptions in the bot log."""
         try:
             observer(evt)
@@ -215,9 +311,12 @@ class EventHandler:
                 str(evt.data),
             )
         finally:
-            self._discard_coalesced_key(coalesced_key)
-            self._pending_observers.release()
+            self._release_queue_slot(is_command)
 
     def close(self):
         """Stop the observer executor during bot shutdown."""
+        with self._queue_condition:
+            self._accepting_events = False
+            self._queue_condition.notify_all()
         self._executor.shutdown(wait=True)
+        self._command_executor.shutdown(wait=True)
