@@ -210,6 +210,9 @@ class IdleMover(Thread):
                 channel_properties_dict["channel_id"] = self.get_channel_by_name(value)
 
         channel_configs.append(deepcopy(channel_properties_dict))
+        channel_configs = [
+            config for config in channel_configs if config.get("channel_id") is not None
+        ]
 
         for config in channel_configs:
             if not all(
@@ -427,12 +430,18 @@ class IdleMover(Thread):
         :return: Channel id
         """
         try:
-            channel = self.ts3conn.channelfind(name)[0].get("cid", "-1")
-        except (TS3Exception, IndexError):
+            matches = self.ts3conn.channelfind(name)
+        except TS3Exception:
             self.logger.exception(
                 "Error while finding a channel with the name `%s`.", str(name)
             )
-            raise
+            return None
+        if not matches:
+            self.logger.warning(
+                "No channel found with the name `%s`; disabling idle moves.", str(name)
+            )
+            return None
+        channel = matches[0].get("cid", "-1")
         return channel
 
     def move_to_afk(self):
@@ -492,9 +501,12 @@ class IdleMover(Thread):
             return
 
         channel_name = str(FALLBACK_ACTION)
+        channel_id = self.get_channel_by_name(channel_name)
+        if channel_id is None:
+            return
 
         try:
-            self.ts3conn.clientmove(self.get_channel_by_name(channel_name), client_id)
+            self.ts3conn.clientmove(channel_id, client_id)
             del self.idling_clients[int(client_id)]
         except KeyError:
             self.logger.error(
@@ -616,6 +628,11 @@ class IdleMover(Thread):
         """
         Loop move functions until the stop signal is sent.
         """
+        if self.afk_channel is None:
+            self.logger.warning(
+                "Idle mover is inactive because its configured channel is unavailable."
+            )
+            return
         while not self.stopped.wait(float(CHECK_FREQUENCY_SECONDS)):
             self.logger.debug("Plugin running!")
 

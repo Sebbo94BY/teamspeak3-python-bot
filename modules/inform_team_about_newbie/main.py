@@ -146,12 +146,19 @@ class InformTeamAboutNewbie(Thread):
         :return: Channel information
         """
         try:
-            channel = self.ts3conn.channelfind(name)[0]
-        except (TS3Exception, IndexError):
+            matches = self.ts3conn.channelfind(name)
+        except TS3Exception:
             self.logger.exception(
                 "Error while finding a channel with the name `%s`.", str(name)
             )
-            raise
+            return None
+        if not matches:
+            self.logger.warning(
+                "No channel found with the name `%s`; clients will not be moved to support.",
+                str(name),
+            )
+            return None
+        channel = matches[0]
 
         return channel
 

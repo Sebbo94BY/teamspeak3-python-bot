@@ -90,8 +90,11 @@ module_loader.EVENT_HANDLER = _Registrar()
 from modules import utils
 from modules.afk_mover import main as afk_mover
 from modules.channel_manager import main as channel_manager
+from modules.channel_requester import main as channel_requester
 from modules.idle_mover import main as idle_mover
 from modules.inform_team_about_newbie import main as newbie_notifier
+from modules.poke_client_on_channel_join import main as poke_on_join
+from modules.switch_supporter_channel_status import main as supporter_status
 from modules.twitch_live import main as twitch_live
 
 
@@ -502,6 +505,64 @@ class RuntimeBugTests(unittest.TestCase):
         bot.ts3conn.channelfind.return_value = []
         with self.assertRaisesRegex(LookupError, "No channel found"):
             bot.get_channel_id("missing")
+
+    def test_plugins_warn_instead_of_raising_for_missing_channels(self):
+        plugin_types = (
+            (afk_mover.AfkMover, "get_channel_by_name"),
+            (idle_mover.IdleMover, "get_channel_by_name"),
+            (newbie_notifier.InformTeamAboutNewbie, "get_channel_by_name"),
+            (channel_manager.ChannelManager, "get_channel_id_by_name_pattern"),
+            (channel_requester.ChannelRequester, "get_channel_by_name"),
+            (poke_on_join.PokeClientOnChannelJoin, "get_channel_by_name"),
+            (supporter_status.SwitchSupporterChannelStatus, "get_channel_by_name"),
+        )
+
+        for plugin_type, lookup_method in plugin_types:
+            with self.subTest(plugin=plugin_type.__name__):
+                plugin = plugin_type.__new__(plugin_type)
+                plugin.logger = Mock()
+                plugin.ts3conn = Mock()
+                plugin.ts3conn.channelfind.return_value = []
+
+                self.assertIsNone(getattr(plugin, lookup_method)("missing"))
+                plugin.logger.warning.assert_called_once()
+
+    def test_channel_requester_ignores_only_the_missing_channel_configuration(self):
+        requester = channel_requester.ChannelRequester.__new__(
+            channel_requester.ChannelRequester
+        )
+        requester.logger = Mock()
+        requester.ts3conn = Mock()
+        requester.ts3conn.channelfind.side_effect = [[], [{"cid": "42"}]]
+
+        configs = requester.parse_channel_settings(
+            {
+                "missing.main_channel_name": "Missing",
+                "available.main_channel_name": "Available",
+            }
+        )
+
+        self.assertEqual(
+            configs,
+            [
+                {
+                    "main_channel_name": "Available",
+                    "main_channel_cid": "42",
+                }
+            ],
+        )
+        requester.logger.warning.assert_called_once()
+
+    def test_afk_mover_stays_inactive_without_its_target_channel(self):
+        mover = afk_mover.AfkMover.__new__(afk_mover.AfkMover)
+        mover.afk_channel = None
+        mover.logger = Mock()
+        mover.stopped = Mock()
+
+        mover.auto_move_all()
+
+        mover.stopped.wait.assert_not_called()
+        mover.logger.warning.assert_called_once()
 
     def test_default_channel_lookup_returns_matching_channel_id(self):
         bot = teamspeak_bot.Ts3Bot.__new__(teamspeak_bot.Ts3Bot)

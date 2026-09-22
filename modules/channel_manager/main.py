@@ -67,7 +67,9 @@ class ChannelManager(Thread):
         self.channel_configs = []
         self.channel_configs = self.parse_channel_settings(CHANNEL_SETTINGS)
         if len(self.channel_configs) == 0:
-            raise ValueError("This plugin requires at least one channel configuration")
+            self.logger.warning(
+                "Channel manager is inactive because no configured parent channel is available."
+            )
 
         self.channel_minimums = self.get_channel_minimums()
 
@@ -135,20 +137,17 @@ class ChannelManager(Thread):
                 channel_properties_dict.clear()
 
             if channel_setting_name == "parent_channel_name":
-                try:
-                    parent_channel_id = self.get_channel_id_by_name_pattern(value)
-                except TS3Exception:
-                    self.logger.exception(
-                        "Could not find any channel with the name pattern `%s`.",
-                        str(value),
-                    )
-                    raise
-
-                channel_properties_dict["parent_channel_id"] = int(parent_channel_id)
+                parent_channel_id = self.get_channel_id_by_name_pattern(value)
+                channel_properties_dict["parent_channel_id"] = parent_channel_id
 
             channel_properties_dict[channel_setting_name] = value
 
         channel_configs.append(deepcopy(channel_properties_dict))
+        channel_configs = [
+            config
+            for config in channel_configs
+            if config.get("parent_channel_id") is not None
+        ]
 
         self.logger.info("Active channel configurations: %s", str(channel_configs))
 
@@ -199,19 +198,21 @@ class ChannelManager(Thread):
         :return: Channel ID
         :type: int
         """
-        channel_id = None
         try:
-            channel_id = int(
-                self.ts3conn.channelfind(channel_name_pattern)[0].get("cid", "-1")
-            )
-        except (TS3Exception, IndexError):
+            matches = self.ts3conn.channelfind(channel_name_pattern)
+        except TS3Exception:
             self.logger.exception(
                 "Error while finding a channel with the name pattern `%s`.",
                 str(channel_name_pattern),
             )
-            raise
-
-        return channel_id
+            return None
+        if not matches:
+            self.logger.warning(
+                "No channel found with the name pattern `%s`; skipping this configuration.",
+                str(channel_name_pattern),
+            )
+            return None
+        return int(matches[0].get("cid", "-1"))
 
     def create_minimum_amount_of_channels(self):
         """

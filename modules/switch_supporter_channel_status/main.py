@@ -77,15 +77,9 @@ class SwitchSupporterChannelStatus(Thread):
         self.afk_channel_ids = []
         if AFK_CHANNEL_NAMES is not None:
             for channel_name in AFK_CHANNEL_NAMES.split(","):
-                try:
-                    self.afk_channel_ids.append(
-                        int(self.get_channel_by_name(channel_name))
-                    )
-                except TS3Exception:
-                    self.logger.error(
-                        "Could not find any channel with the name `%s`.",
-                        str(channel_name),
-                    )
+                channel_id = self.get_channel_by_name(channel_name)
+                if channel_id is not None:
+                    self.afk_channel_ids.append(int(channel_id))
 
         self.servergroup_ids_to_check = None
         self.servergroup_ids_to_check = self.update_servergroup_ids_to_check()
@@ -114,12 +108,18 @@ class SwitchSupporterChannelStatus(Thread):
         :return: Channel ID
         """
         try:
-            channel_id = self.ts3conn.channelfind(name)[0].get("cid", "-1")
-        except (TS3Exception, IndexError):
+            matches = self.ts3conn.channelfind(name)
+        except TS3Exception:
             self.logger.exception(
                 "Error while finding a channel with the name `%s`.", str(name)
             )
-            raise
+            return None
+        if not matches:
+            self.logger.warning(
+                "No channel found with the name `%s`; skipping it.", str(name)
+            )
+            return None
+        channel_id = matches[0].get("cid", "-1")
 
         return channel_id
 
@@ -242,6 +242,11 @@ class SwitchSupporterChannelStatus(Thread):
         """
         Opens or closes a specific channel, when clients of specific servergroups are online or offline.
         """
+        if self.supporter_channel_id is None:
+            self.logger.warning(
+                "Supporter-channel status is inactive because its configured channel is unavailable."
+            )
+            return
         try:
             channel_info = self.ts3conn._parse_resp_to_list_of_dicts(
                 self.ts3conn._send(
