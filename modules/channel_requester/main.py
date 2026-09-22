@@ -66,7 +66,9 @@ class ChannelRequester(Thread):
         self.channel_configs = []
         self.channel_configs = self.parse_channel_settings(CHANNEL_SETTINGS)
         if len(self.channel_configs) == 0:
-            raise ValueError("This plugin requires at least one channel configuration")
+            self.logger.warning(
+                "Channel requester is inactive because no configured main channel is available."
+            )
 
     def get_channel_group_by_name(self, name="Channel Admin"):
         """
@@ -136,12 +138,19 @@ class ChannelRequester(Thread):
         :return: Channel id
         """
         try:
-            channel_id = self.ts3conn.channelfind(name)[0].get("cid", "-1")
-        except (TS3Exception, IndexError):
+            matches = self.ts3conn.channelfind(name)
+        except TS3Exception:
             self.logger.exception(
                 "Error while finding a channel with the name `%s`.", str(name)
             )
-            raise
+            return None
+        if not matches:
+            self.logger.warning(
+                "No channel found with the name `%s`; skipping this configuration.",
+                str(name),
+            )
+            return None
+        channel_id = matches[0].get("cid", "-1")
 
         return channel_id
 
@@ -191,6 +200,11 @@ class ChannelRequester(Thread):
                 channel_properties_dict["channel_group_id"] = int(channel_group_id)
 
         channel_configs.append(deepcopy(channel_properties_dict))
+        channel_configs = [
+            config
+            for config in channel_configs
+            if config.get("main_channel_cid") is not None
+        ]
 
         self.logger.info("Active channel configurations: %s", str(channel_configs))
 

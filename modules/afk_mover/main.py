@@ -85,12 +85,18 @@ class AfkMover(Thread):
         :return: Channel id
         """
         try:
-            channel = self.ts3conn.channelfind(name)[0].get("cid", "-1")
-        except (TS3Exception, IndexError):
+            matches = self.ts3conn.channelfind(name)
+        except TS3Exception:
             self.logger.exception(
                 "Error while finding a channel with the name `%s`.", str(name)
             )
-            raise
+            return None
+        if not matches:
+            self.logger.warning(
+                "No channel found with the name `%s`; disabling AFK moves.", str(name)
+            )
+            return None
+        channel = matches[0].get("cid", "-1")
         return channel
 
     def update_afk_list(self):
@@ -128,9 +134,12 @@ class AfkMover(Thread):
             return
 
         channel_name = str(FALLBACK_ACTION)
+        channel_id = self.get_channel_by_name(channel_name)
+        if channel_id is None:
+            return
 
         try:
-            self.ts3conn.clientmove(self.get_channel_by_name(channel_name), client_id)
+            self.ts3conn.clientmove(channel_id, client_id)
             del self.client_channels[str(client_id)]
         except KeyError:
             self.logger.error(
@@ -451,6 +460,11 @@ class AfkMover(Thread):
         """
         Loop move functions until the stop signal is sent.
         """
+        if self.afk_channel is None:
+            self.logger.warning(
+                "AFK mover is inactive because its configured channel is unavailable."
+            )
+            return
         while not self.stopped.wait(float(CHECK_FREQUENCY_SECONDS)):
             self.logger.debug("Afkmover running!")
             try:
