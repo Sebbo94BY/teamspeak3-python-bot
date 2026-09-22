@@ -421,6 +421,7 @@ class RuntimeBugTests(unittest.TestCase):
         release_observer = threading.Event()
         first_observer_started = threading.Event()
         second_submit_finished = threading.Event()
+        queue_full_logged = threading.Event()
         received_sequences = []
 
         def observer(event):
@@ -433,17 +434,57 @@ class RuntimeBugTests(unittest.TestCase):
         handler = event_handler.EventHandler(connection, commands, event_queue_size=1)
         handler.add_observer(observer, event_handler.ClientMovedEvent)
         try:
-            handler.inform_all(event_handler.ClientMovedEvent({"sequence": 1}))
-            self.assertTrue(first_observer_started.wait(timeout=1))
+            with patch.object(event_handler.EventHandler.logger, "warning") as warning:
+                warning.side_effect = lambda *_args: queue_full_logged.set()
+                handler.inform_all(event_handler.ClientMovedEvent({"sequence": 1}))
+                self.assertTrue(first_observer_started.wait(timeout=1))
+                submitter = threading.Thread(
+                    target=lambda: (
+                        handler.inform_all(
+                            event_handler.ClientMovedEvent({"sequence": 2})
+                        ),
+                        second_submit_finished.set(),
+                    )
+                )
+                submitter.start()
+                self.assertFalse(second_submit_finished.wait(timeout=0.1))
+                self.assertTrue(queue_full_logged.wait(timeout=1))
+
+                release_observer.set()
+                submitter.join(timeout=1)
+                self.assertFalse(submitter.is_alive())
+        finally:
+            release_observer.set()
+            handler.close()
+
+        self.assertTrue(second_submit_finished.is_set())
+        self.assertCountEqual(received_sequences, [1, 2])
+
+    def test_full_command_queue_blocks_independently(self):
+        release_observer = threading.Event()
+        observer_started = threading.Event()
+        submitter_finished = threading.Event()
+
+        def observer(_event):
+            observer_started.set()
+            release_observer.wait(timeout=5)
+
+        connection = Mock()
+        commands = command_handler.CommandHandler(connection)
+        handler = event_handler.EventHandler(connection, commands, command_queue_size=1)
+        handler.remove_observer(commands.inform, event_handler.TextMessageEvent)
+        handler.add_observer(observer, event_handler.TextMessageEvent)
+        try:
+            handler.inform_all(event_handler.TextMessageEvent({}))
+            self.assertTrue(observer_started.wait(timeout=1))
             submitter = threading.Thread(
                 target=lambda: (
-                    handler.inform_all(event_handler.ClientMovedEvent({"sequence": 2})),
-                    second_submit_finished.set(),
+                    handler.inform_all(event_handler.TextMessageEvent({})),
+                    submitter_finished.set(),
                 )
             )
             submitter.start()
-            self.assertFalse(second_submit_finished.wait(timeout=0.1))
-
+            self.assertFalse(submitter_finished.wait(timeout=0.1))
             release_observer.set()
             submitter.join(timeout=1)
             self.assertFalse(submitter.is_alive())
@@ -451,8 +492,7 @@ class RuntimeBugTests(unittest.TestCase):
             release_observer.set()
             handler.close()
 
-        self.assertTrue(second_submit_finished.is_set())
-        self.assertCountEqual(received_sequences, [1, 2])
+        self.assertTrue(submitter_finished.is_set())
 
     def test_shutdown_unblocks_a_submitter_waiting_for_queue_capacity(self):
         release_observer = threading.Event()
@@ -602,6 +642,39 @@ class RuntimeBugTests(unittest.TestCase):
         self.assertEqual(shutdown_order, ["stop", "drain", "quit"])
         self.assertIsNone(bot.ts3conn)
         self.assertIsNone(bot.event_handler)
+
+    def test_stop_and_restart_shutdown_from_a_dedicated_thread(self):
+        shutdown_order = []
+        bot = Mock()
+        bot.close.side_effect = lambda: shutdown_order.append("close")
+        utils.BOT = bot
+        utils.DRY_RUN = False
+
+        with (
+            patch.object(utils, "exit_all"),
+            patch.object(
+                utils.main,
+                "restart_program",
+                side_effect=lambda: shutdown_order.append("restart"),
+            ),
+            patch.object(utils, "_shutdown_bot") as shutdown,
+        ):
+            utils.stop_bot(1, "!stop")
+            utils.restart_bot(1, "!restart")
+
+        shutdown.assert_has_calls([call(), call(restart=True)])
+
+        with patch.object(
+            utils.main,
+            "restart_program",
+            side_effect=lambda: shutdown_order.append("restart"),
+        ):
+            thread = utils._shutdown_bot(restart=True)
+            self.assertEqual(thread.name, "ts3-shutdown")
+            thread.join(timeout=1)
+            self.assertFalse(thread.is_alive())
+
+        self.assertEqual(shutdown_order, ["close", "restart"])
 
     def test_multimove_moves_client_without_casting_client_dictionary(self):
         connection = Mock()
