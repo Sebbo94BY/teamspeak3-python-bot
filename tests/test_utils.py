@@ -31,28 +31,43 @@ class UtilsTests(unittest.TestCase):
             utils.get_command_list(7, "")
         self.assertEqual(send.call_count, 3)
 
-    def test_stop_and_restart_honor_dry_run_and_call_shutdown(self):
-        connection = Mock()
-        utils.BOT = SimpleNamespace(ts3conn=connection)
+    def test_stop_and_restart_honor_dry_run_and_schedule_shutdown(self):
+        utils.BOT = SimpleNamespace(close=Mock())
         utils.DRY_RUN = True
         with (
             patch.object(utils, "exit_all") as exit_all,
             patch.object(utils.main, "restart_program") as restart,
+            patch.object(utils, "_shutdown_bot") as shutdown,
         ):
             utils.stop_bot(7, "")
             utils.restart_bot(7, "")
         exit_all.assert_not_called()
         restart.assert_not_called()
+        shutdown.assert_not_called()
 
         utils.DRY_RUN = False
         with (
             patch.object(utils, "exit_all") as exit_all,
             patch.object(utils.main, "restart_program") as restart,
+            patch.object(utils, "_shutdown_bot") as shutdown,
         ):
             utils.stop_bot(7, "")
             utils.restart_bot(7, "")
         self.assertEqual(exit_all.call_count, 2)
-        self.assertEqual(connection.quit.call_count, 2)
+        shutdown.assert_any_call()
+        shutdown.assert_any_call(restart=True)
+        self.assertEqual(shutdown.call_count, 2)
+
+    def test_shutdown_closes_bot_and_restarts_in_shutdown_thread(self):
+        bot = SimpleNamespace(close=Mock())
+        utils.BOT = bot
+
+        with patch.object(utils.main, "restart_program") as restart:
+            shutdown_thread = utils._shutdown_bot(restart=True)
+            shutdown_thread.join(timeout=1)
+
+        self.assertFalse(shutdown_thread.is_alive())
+        bot.close.assert_called_once_with()
         restart.assert_called_once_with()
 
     def test_multimove_moves_clients_between_matching_channels(self):
