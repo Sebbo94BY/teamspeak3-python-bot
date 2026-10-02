@@ -179,6 +179,7 @@ def exit_plugin(function):
     :param function: Exit function to call.
     """
     exits.append(function)
+    return function
 
 
 # We really really want to catch all Exception here to prevent a bad module preventing everything

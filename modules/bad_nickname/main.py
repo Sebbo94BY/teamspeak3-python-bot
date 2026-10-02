@@ -93,6 +93,9 @@ class BadNickname(Thread):
         bad_name_pattern_dict = {}
         bad_name_patterns_list = []
 
+        if not bad_name_patterns:
+            return bad_name_patterns_list
+
         for key, bad_name_pattern in bad_name_patterns.items():
             try:
                 bad_name_pattern_alias, bade_name_pattern_option = key.split(".")
@@ -106,11 +109,12 @@ class BadNickname(Thread):
                 old_bad_name_pattern_alias = bad_name_pattern_alias
 
             if (
-                bad_name_pattern_alias != old_bad_name_pattern_alias
-                and len(bad_name_pattern_dict) > 0
+                old_bad_name_pattern_alias is not None
+                and bad_name_pattern_alias != old_bad_name_pattern_alias
             ):
+                if len(bad_name_pattern_dict) > 0:
+                    bad_name_patterns_list.append(deepcopy(bad_name_pattern_dict))
                 old_bad_name_pattern_alias = bad_name_pattern_alias
-                bad_name_patterns_list.append(deepcopy(bad_name_pattern_dict))
                 bad_name_pattern_dict.clear()
 
             if bade_name_pattern_option != "name_pattern":
@@ -118,17 +122,18 @@ class BadNickname(Thread):
                     f"Unknown option `{bade_name_pattern_option}` is defined. Please remove it."
                 )
 
-            bad_name_pattern_dict["regex_alias"] = str(bad_name_pattern_alias)
-            bad_name_pattern_dict["regex_object"] = self.compile_regex_pattern(
-                bad_name_pattern
-            )
-
-            if bad_name_pattern_dict["regex_object"] is None:
+            regex_object = self.compile_regex_pattern(bad_name_pattern)
+            if regex_object is None:
                 self.logger.error(
                     "Could not compile your given regex: `%s`.", str(bad_name_pattern)
                 )
+                continue
 
-        bad_name_patterns_list.append(deepcopy(bad_name_pattern_dict))
+            bad_name_pattern_dict["regex_alias"] = str(bad_name_pattern_alias)
+            bad_name_pattern_dict["regex_object"] = regex_object
+
+        if len(bad_name_pattern_dict) > 0:
+            bad_name_patterns_list.append(deepcopy(bad_name_pattern_dict))
 
         self.logger.info("Active bad name patterns: %s", str(bad_name_patterns_list))
 

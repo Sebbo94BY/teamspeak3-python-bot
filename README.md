@@ -2,6 +2,7 @@
 
 [![Code Style](https://github.com/Sebi94nbg/teamspeak3-python-bot/actions/workflows/black_formatter.yml/badge.svg?branch=main)](https://github.com/Sebi94nbg/teamspeak3-python-bot/actions/workflows/black_formatter.yml?query=branch%3Amain)
 [![Python Lint](https://github.com/Sebi94nbg/teamspeak3-python-bot/actions/workflows/pylint.yml/badge.svg?branch=main)](https://github.com/Sebi94nbg/teamspeak3-python-bot/actions/workflows/pylint.yml?query=branch%3Amain)
+[![Coverage](https://codecov.io/gh/Sebi94nbg/teamspeak3-python-bot/branch/main/graph/badge.svg)](https://codecov.io/gh/Sebi94nbg/teamspeak3-python-bot)
 [![CodeQL](https://github.com/Sebi94nbg/teamspeak3-python-bot/actions/workflows/codeql-analysis.yml/badge.svg?branch=main)](https://github.com/Sebi94nbg/teamspeak3-python-bot/actions/workflows/codeql-analysis.yml?query=branch%3Amain)
 
 Simple TeamSpeak bot based on the [ts3API](https://github.com/Murgeye/ts3API).

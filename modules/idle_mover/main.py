@@ -357,7 +357,7 @@ class IdleMover(Thread):
             self.logger.debug("get_back_list idle_list is None!")
             return client_back_list
 
-        for client_clid, client_cid in self.idling_clients.items():
+        for client_clid, client_cid in list(self.idling_clients.items()):
             self.logger.debug("get_back_list checking client clid=%s", int(client_clid))
 
             try:
@@ -471,14 +471,13 @@ class IdleMover(Thread):
                     self.ts3conn.clientmove(
                         self.afk_channel, int(client.get("clid", "-1"))
                     )
+                    self.idling_clients[int(client.get("clid", "-1"))] = int(
+                        client.get("cid", "0")
+                    )
                 except TS3Exception:
                     self.logger.exception(
                         "Error moving client! clid=%s", int(client.get("clid", "-1"))
                     )
-
-                self.idling_clients[int(client.get("clid", "-1"))] = int(
-                    client.get("cid", "0")
-                )
 
         self.logger.debug("Idling clients: %s", self.idling_clients)
 

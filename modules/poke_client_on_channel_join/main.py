@@ -114,6 +114,7 @@ class PokeClientOnChannelJoin(Thread):
                 old_channel_alias = channel_alias
                 channel_configs.append(deepcopy(channel_properties_dict))
                 channel_properties_dict.clear()
+                channel_properties_dict["team_client_database_ids"] = []
 
             channel_properties_dict[channel_setting_name] = value
 

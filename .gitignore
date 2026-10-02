@@ -6,6 +6,8 @@ afk.log
 *.log
 *.log.*
 *.pyc
+.coverage
+coverage.xml
 venv/
 *__pycache__/
 main.sh
