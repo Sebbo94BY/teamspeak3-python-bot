@@ -1,0 +1,50 @@
+name: Test Coverage
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  schedule:
+    - cron: '0 15 * * 2'
+
+permissions:
+  contents: read
+
+jobs:
+  coverage:
+    name: Unit Test Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run unit tests with coverage
+        run: coverage run --branch -m unittest discover -v
+
+      - name: Print coverage report
+        run: coverage report --show-missing --fail-under=70
+
+      - name: Create XML coverage report
+        run: coverage xml
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: coverage-report
+          path: coverage.xml
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: ./coverage.xml
+          flags: unittests
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}

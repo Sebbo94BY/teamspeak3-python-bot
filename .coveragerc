@@ -1,0 +1,11 @@
+[run]
+branch = True
+source = .
+
+[report]
+omit =
+    */tests/*
+    */.venv/*
+    */venv/*
+exclude_also =
+    if __name__ == .__main__.:

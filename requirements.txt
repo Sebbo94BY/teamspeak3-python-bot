@@ -11,3 +11,6 @@ pylint==4.0.9
 # Only for fixing this Pylint error: ModuleNotFoundError: No module named 'typing_extensions'
 # See https://github.com/Sebi94nbg/teamspeak3-python-bot/actions/runs/3864557425/jobs/6587510172
 typing_extensions==4.16.0
+
+# Required for the CI coverage report and for measuring the test suite locally.
+coverage==7.16.2

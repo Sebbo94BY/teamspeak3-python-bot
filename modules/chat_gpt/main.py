@@ -92,9 +92,8 @@ def ask_chatgpt(sender=None, msg=None):
             "Error while sending the plugin version as a message to the client!"
         )
 
-    client = OpenAI(api_key=str(PLUGIN_INFO.openai_api_key))
-
     try:
+        client = OpenAI(api_key=str(PLUGIN_INFO.openai_api_key))
         completion = client.responses.create(
             model=PLUGIN_INFO.openai_model,
             input=chatgpt_prompt,
@@ -115,9 +114,26 @@ def ask_chatgpt(sender=None, msg=None):
             )
 
         return
+    except Exception as api_error:  # pylint: disable=broad-exception-caught
+        ChatGPT.logger.exception("ChatGPT request failed: %s", str(api_error))
+
+        try:
+            teamspeak_bot.send_msg_to_client(
+                BOT.ts3conn,
+                sender,
+                "The request to ChatGPT failed. Please try again later.",
+            )
+        except TS3Exception:
+            ChatGPT.logger.exception(
+                "Error: Could not inform the client that the ChatGPT request failed."
+            )
+
+        return
 
     try:
         chatgpt_response = completion.output_text.strip()
+        if not chatgpt_response:
+            raise AttributeError("ChatGPT returned an empty response")
     except (AttributeError, TypeError):
         ChatGPT.logger.error("ChatGPT did not return any choices: %s", str(completion))
 
