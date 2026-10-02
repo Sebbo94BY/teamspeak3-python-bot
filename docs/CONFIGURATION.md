@@ -21,6 +21,13 @@ This section contains general settings for the Bot:
 | DefaultChannel | `Botchannel` | string | The name of the channel, where the Bot should be in. Can be a pattern. |
 | User | `serveradmin` | string | The ServerQuery user to authenticate with. |
 | Password | `query-password` | string | The password for the ServerQuery user. |
+| EventWorkers | `2` | integer | Number of workers for regular TeamSpeak events. Increase only when handlers are I/O-bound and the server can sustain the extra API work. |
+| CommandWorkers | `1` | integer | Number of workers reserved for private-message commands. |
+| EventQueueSize | `50` | integer | Maximum running plus queued regular-event observer jobs. When full, the bot pauses intake rather than dropping events or growing memory. |
+| CommandQueueSize | `10` | integer | Maximum running plus queued command observer jobs. |
+| MemoryLimitMB | `128` | integer | RSS high-water warning limit in MiB. Keep this equal to systemd `MemoryMax`; `0` disables the warning. The systemd unit enforces the actual limit. |
+
+The shipped values target small servers (roughly 20–30 connected clients and 50–100 channels with lightweight plugins). Administrators should check the bot logs for queue-pressure and memory warnings, then increase workers, queue sizes, and the matching systemd memory limits gradually when normal usage requires it.
 
 ### Using SSH (Encrypted ServerQuery connection)
 
