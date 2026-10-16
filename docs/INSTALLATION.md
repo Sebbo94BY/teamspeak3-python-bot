@@ -78,13 +78,21 @@ The following instructions were tested on Linux Debian 11 (Bullseye).
 2. Install the `teamspeak-bot.service` file from this repository: `cp teamspeak-bot.service /etc/systemd/system/`
 3. Ensure, that the permissions are correct:
    - `sudo chown root:root /etc/systemd/system/teamspeak-bot.service`
-   - `sudo chmod 0777 /etc/systemd/system/teamspeak-bot.service`
+   - `sudo chmod 0644 /etc/systemd/system/teamspeak-bot.service`
 4. Adjust the following systemd unit options, if necessary:
    - `User`: The user, under which your bot should run (see step 1).
    - `Group`: The group, under which your bot should run (see step 1).
    - `After`: Add your TeamSpeak server systemd unit, when it is running on the same server as systemd unit.
    - `WorkingDirectory`: The installation directory of your bot.
    - `ExecStart`: The installation directory of the Python virtual environment.
+   - `MemoryHigh`/`MemoryMax`: Memory pressure and hard limit. Set `MemoryLimitMB` in `config.ini` to the same `MemoryMax` value so the bot warns before systemd terminates it.
+   - `TasksMax`: Maximum task/thread count for the service.
+   - `EventWorkers`/`CommandWorkers` in `config.ini`: Tune event and command concurrency. Start with the defaults; raise gradually while watching TeamSpeak query latency and CPU use.
+   - `EventQueueSize`/`CommandQueueSize` in `config.ini`: Bound queued work. Queue-pressure warnings mean the bot is applying backpressure; increase these only alongside sufficient memory and worker capacity.
+
+   The virtual environment is checked at each start, but rebuilt only when `requirements.txt` changes. It is therefore safe to retain the `ExecStartPre` line.
+
+   The supplied 128 MiB profile targets small, lightly configured servers. Check the bot logs after deployment: memory and queue-pressure warnings indicate that the workers, queue limits, and matching `MemoryHigh`/`MemoryMax` values need to be raised gradually.
 5. Reload systemd: `sudo systemctl daemon-reload`
 6. Enable the systemd unit: `sudo systemctl enable teamspeak-bot.service`
 7. Start the systemd unit: `sudo systemctl start teamspeak-bot.service`
