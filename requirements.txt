@@ -13,4 +13,4 @@ pylint==4.1.3
 typing_extensions==4.16.0
 
 # Required for the CI coverage report and for measuring the test suite locally.
-coverage==7.16.2
+coverage==7.17.0
